@@ -38,6 +38,11 @@
 #include "Thirdparty/g2o/g2o/core/robust_kernel_impl.h"
 #include "Thirdparty/g2o/g2o/solvers/linear_solver_dense.h"
 
+/**
+ * Patched By Hesam
+ */
+#include "autotune/Autotune.h"
+
 namespace ORB_SLAM3
 {
 
@@ -46,6 +51,12 @@ class LoopClosing;
 class Optimizer
 {
 public:
+
+    /**
+     * Patched By Hesam 
+     */
+    static bool mbLiveBAAutotune;
+    static AutotuneConfig msLiveBAConfig;
 
     void static BundleAdjustment(const std::vector<KeyFrame*> &vpKF, const std::vector<MapPoint*> &vpMP,
                                  int nIterations = 5, bool *pbStopFlag=NULL, const unsigned long nLoopKF=0,

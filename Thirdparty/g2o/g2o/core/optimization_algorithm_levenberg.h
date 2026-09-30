@@ -65,10 +65,19 @@ namespace g2o {
       //! return the number of levenberg iterations performed in the last round
       int levenbergIteration() { return _levenbergIterations;}
 
+      /**
+       * Patched By Hesam
+       */
+      //! return the currently used stop criterion threshold
+      double stopCriteriaThreshold() const { return _stopCriteriaThreshold->value(); }
+      //! specify the stop criterion threshold used for the Raul stop criterium
+      void setStopCriteriaThreshold(double stop_criteria_threshold);
+
     protected:
       // Levenberg parameters
       Property<int>* _maxTrialsAfterFailure;
       Property<double>* _userLambdaInit;
+      Property<double>* _stopCriteriaThreshold;
       double _currentLambda;
       double _tau;
       double _goodStepLowerScale; ///< lower bound for lambda decrease if a good LM step

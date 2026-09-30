@@ -28,10 +28,18 @@ find_package(OpenCV REQUIRED)
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(Pangolin REQUIRED)
 find_package(yaml-cpp REQUIRED)
+# Patched By Hesam
+find_package(glog CONFIG REQUIRED)
 
 # DBoW2 and g2o from Thirdparty folders
 add_subdirectory(Thirdparty/DBoW2)
 add_subdirectory(Thirdparty/g2o)
+
+# Patched By Hesam
+# autotune_core is a standalone repo now; built+installed separately (components/build.sh),
+# located via CMAKE_PREFIX_PATH (see build.sh).
+find_package(cov_auto_tune CONFIG REQUIRED)
+message(STATUS "Found cov_auto_tune: ${cov_auto_tune_DIR}")
 
 # Interface library for common warnings
 add_library(orbslam3_warnings INTERFACE)
@@ -61,6 +69,8 @@ add_library(${PROJECT_NAME} SHARED
         src/Map.cc
         src/MapDrawer.cc
         src/Optimizer.cc
+        # Patched By Hesam
+        src/autotune/Autotune.cc
         src/Frame.cc
         src/KeyFrameDatabase.cc
         src/Sim3Solver.cc
@@ -100,6 +110,9 @@ target_link_libraries(${PROJECT_NAME}
     ${Pangolin_LIBRARIES}
     PUBLIC DBoW2
     PUBLIC g2o
+    # Patched By Hesam
+    cov_auto_tune::g2o
+    glog::glog
     -lboost_serialization
     -lcrypto
 )

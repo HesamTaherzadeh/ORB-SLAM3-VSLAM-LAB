@@ -49,6 +49,10 @@ namespace g2o {
     _goodStepLowerScale = 1./3.;
     _userLambdaInit = _properties.makeProperty<Property<double> >("initialLambda", 0.);
     _maxTrialsAfterFailure = _properties.makeProperty<Property<int> >("maxTrialsAfterFailure", 10); // Carlos: Originally 10 iterations
+    /**
+     * Patched By Hesam
+     */
+    _stopCriteriaThreshold = _properties.makeProperty<Property<double> >("stopCriteriaThreshold", 1e-3); // Raul stop criterium: was hard-coded 1e3 == 1/1e-3
     _ni=2.;
     _levenbergIterations = 0;
     _nBad = 0;
@@ -154,8 +158,11 @@ namespace g2o {
       return Terminate;
     }
 
-    //Stop criterium (Raul)
-    if((iniChi-currentChi)*1e3<iniChi)
+    /**
+     * Patched By Hesam
+     */
+    //Stop criterium (Raul) -- (iniChi-currentChi)/iniChi < stopCriteriaThreshold; default 1e-3 == old *1e3<iniChi
+    if((iniChi-currentChi) < iniChi*_stopCriteriaThreshold->value())
         _nBad++;
     else
         _nBad=0;
@@ -201,6 +208,14 @@ namespace g2o {
   void OptimizationAlgorithmLevenberg::setUserLambdaInit(double lambda)
   {
     _userLambdaInit->setValue(lambda);
+  }
+
+  /**
+   * Patched By Hesam
+   */
+  void OptimizationAlgorithmLevenberg::setStopCriteriaThreshold(double stop_criteria_threshold)
+  {
+    _stopCriteriaThreshold->setValue(stop_criteria_threshold);
   }
 
   void OptimizationAlgorithmLevenberg::printVerbose(std::ostream& os) const

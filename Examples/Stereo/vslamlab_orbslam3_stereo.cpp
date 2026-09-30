@@ -8,6 +8,11 @@
 #include "sys/sysinfo.h"
 
 #include<System.h>
+/**
+ * Patched By Hesam
+ */
+#include "Optimizer.h"
+#include "autotune/Autotune.h"
 
 #include <sstream>
 #include <vector>
@@ -44,6 +49,10 @@ int main(int argc, char **argv)
     string exp_id{"0"};
     string settings_yaml{"orbslam2_settings.yaml"};
     bool verbose{true};
+    /**
+     * Patched By Hesam
+     */
+    string autotune_config{"-"};
 
     string vocabulary{"Vocabulary/ORBvoc.txt"};
     cout << endl;
@@ -96,6 +105,28 @@ int main(int argc, char **argv)
             vocabulary = arg;
             std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to vocabulary = " << vocabulary << std::endl;
             continue;
+        }
+        /**
+         * Patched By Hesam
+         */
+        if (arg.find("autotune_config:") != std::string::npos) {
+            removeSubstring(arg, "autotune_config:");
+            autotune_config = arg;
+            std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to autotune_config = " << autotune_config << std::endl;
+            continue;
+        }
+    }
+
+    /**
+     * Patched By Hesam
+     */
+    if (autotune_config != "-") {
+        ORB_SLAM3::Optimizer::mbLiveBAAutotune = true;
+        try {
+            ORB_SLAM3::Optimizer::msLiveBAConfig = ORB_SLAM3::LoadAutotuneConfig(autotune_config);
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to load autotune config '" << autotune_config << "': " << e.what() << std::endl;
+            return 1;
         }
     }
 
@@ -153,6 +184,14 @@ int main(int argc, char **argv)
 
     // Stop all threads
     SLAM.Shutdown();
+
+    /**
+     * Patched By Hesam
+     */
+    if (ORB_SLAM3::Optimizer::mbLiveBAAutotune) {
+        string clampStatsPath = exp_folder + "/" + paddingZeros(exp_id) + "_autotune_clamp_stats.csv";
+        ORB_SLAM3::SaveAutotuneClampStatsCSV(clampStatsPath);
+    }
 
     // Tracking time statistics
     sort(vTimesTrack.begin(),vTimesTrack.end());
