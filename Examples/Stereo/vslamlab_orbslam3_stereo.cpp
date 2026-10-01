@@ -179,6 +179,9 @@ int main(int argc, char **argv)
     LoadImages(sequence_path, rgb_csv, imageFilenames_l, timestamps, imageFilenames_r, cam0_name, cam1_name);
 
     size_t nImages = imageFilenames_l.size();
+    if (nImages == 0) {
+        LOG(FATAL) << "No images loaded from rgb_csv '" << rgb_csv;
+    }
 
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
     ORB_SLAM3::System SLAM(vocabulary, calibration_yaml, settings_yaml,
