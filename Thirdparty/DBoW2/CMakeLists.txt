@@ -10,10 +10,19 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
 endif()
 
-# Output directories
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
+# Patched By Hesam
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib-debug)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib-debug)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin-debug)
+else()
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
+endif()
+
+# Patched By Hesam 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
 
 # Dependencies
 find_package(OpenCV REQUIRED)
@@ -25,8 +34,8 @@ target_compile_options(dbow2_warnings INTERFACE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
 
-# Optimization/Architecture flags
-set(DBOW2_OPTIMIZATION_FLAGS -O3 -march=native) 
+# Optimization flags -- Release only, so a Debug configure stays -O0 -g
+set(DBOW2_OPTIMIZATION_FLAGS $<$<CONFIG:Release>:-O3>)
 
 # Configuration Header
 configure_file(DBoW2/DBoW2.cmake.in "${PROJECT_BINARY_DIR}/DBoW2Config.cmake" @ONLY)
