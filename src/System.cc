@@ -38,6 +38,8 @@ namespace ORB_SLAM3
 
 Verbose::eLevel Verbose::th = Verbose::VERBOSITY_NORMAL;
 
+bool System::mbLoopClosingEnabled = true;
+
 System::System(const string &strVocFile, const string &strCalibrationFile, const string &strSettingsFile,
                const eSensor sensor, const bool bUseViewer, const int initFr, const string &strSequence):
                mSensor(sensor), mpViewer(static_cast<Viewer*>(NULL)),
@@ -105,6 +107,7 @@ System::System(const string &strVocFile, const string &strCalibrationFile, const
     {
         activeLC = static_cast<int>(fsSettings["loopClosing"]) != 0;
     }
+    activeLC = activeLC && System::mbLoopClosingEnabled;
 
     mStrVocabularyFilePath = strVocFile;
 

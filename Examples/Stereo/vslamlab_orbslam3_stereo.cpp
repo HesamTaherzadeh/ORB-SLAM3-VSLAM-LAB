@@ -55,6 +55,8 @@ int main(int argc, char **argv)
      */
     string autotune_config{"-"};
     string vanilla_config{"-"};
+    bool loop_closing{true};
+    double playback_speed{1.0};
 
     string vocabulary{"Vocabulary/ORBvoc.txt"};
     cout << endl;
@@ -117,6 +119,18 @@ int main(int argc, char **argv)
             std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to autotune_config = " << autotune_config << std::endl;
             continue;
         }
+        if (arg.find("loop_closing:") != std::string::npos) {
+            removeSubstring(arg, "loop_closing:");
+            loop_closing = std::stoi(arg) != 0;
+            std::cout << "[vslamlab_orbslam3_stereo.cpp] loop_closing = " << loop_closing << std::endl;
+            continue;
+        }
+        if (arg.find("playback_speed:") != std::string::npos) {
+            removeSubstring(arg, "playback_speed:");
+            playback_speed = std::stod(arg);
+            std::cout << "[vslamlab_orbslam3_stereo.cpp] playback_speed = " << playback_speed << std::endl;
+            continue;
+        }
         if (arg.find("vanilla_config:") != std::string::npos) {
             removeSubstring(arg, "vanilla_config:");
             vanilla_config = arg;
@@ -130,6 +144,8 @@ int main(int argc, char **argv)
      */
     google::InitGoogleLogging(argv[0]);
     FLAGS_logtostderr = 1;
+
+    ORB_SLAM3::System::mbLoopClosingEnabled = loop_closing;
 
     const bool autotune_given = (autotune_config != "-");
     const bool vanilla_given = (vanilla_config != "-");
@@ -200,6 +216,9 @@ int main(int argc, char **argv)
             T = timestamps[ni+1] - tframe;
         else if(ni > 0)
             T = tframe - timestamps[ni-1];
+
+        if(playback_speed > 0.0)
+            T /= playback_speed;
 
         if(ttrack < T)
             usleep((T-ttrack)  * 1e6);
