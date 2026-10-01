@@ -23,6 +23,7 @@
 #include "Optimizer.h"
 #include "Converter.h"
 #include "GeometricTools.h"
+#include <glog/logging.h>
 
 #include<mutex>
 #include<chrono>
@@ -896,6 +897,10 @@ bool LocalMapping::SetNotStop(bool flag)
 
 void LocalMapping::InterruptBA()
 {
+    /**
+     * Patched By Hesam
+     */
+    LOG(WARNING) << "[LocalBA] InterruptBA() called by Tracking, queued_KFs=" << KeyframesInQueue();
     mbAbortBA = true;
 }
 
