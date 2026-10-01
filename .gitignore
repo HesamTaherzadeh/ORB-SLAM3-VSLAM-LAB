@@ -95,3 +95,9 @@ borrar/*
 # VSLAM-LAB
 install_orbslam3.txt
 install_orbslam3-dev.txt
+# debug/out-of-tree build artifacts
+build*/
+lib*/
+*.o
+*.so
+*.a

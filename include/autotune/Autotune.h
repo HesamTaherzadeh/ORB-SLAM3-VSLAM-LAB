@@ -40,6 +40,17 @@ struct AutotuneConfig
 
 AutotuneConfig LoadAutotuneConfig(const std::string& path);
 
+/**
+ * Patched By Hesam
+ */
+struct VanillaConfig
+{
+    double stop_criteria_threshold = 1e-3;
+    int num_iterations = 10;
+};
+
+VanillaConfig LoadVanillaConfig(const std::string& path);
+
 void SaveAutotuneClampStatsCSV(const std::string& path);
 
 void RunLiveOctaveAutotune(

@@ -13,6 +13,7 @@
  */
 #include "Optimizer.h"
 #include "autotune/Autotune.h"
+#include <glog/logging.h>
 
 #include <sstream>
 #include <vector>
@@ -53,6 +54,7 @@ int main(int argc, char **argv)
      * Patched By Hesam
      */
     string autotune_config{"-"};
+    string vanilla_config{"-"};
 
     string vocabulary{"Vocabulary/ORBvoc.txt"};
     cout << endl;
@@ -115,18 +117,40 @@ int main(int argc, char **argv)
             std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to autotune_config = " << autotune_config << std::endl;
             continue;
         }
+        if (arg.find("vanilla_config:") != std::string::npos) {
+            removeSubstring(arg, "vanilla_config:");
+            vanilla_config = arg;
+            std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to vanilla_config = " << vanilla_config << std::endl;
+            continue;
+        }
     }
 
     /**
      * Patched By Hesam
      */
-    if (autotune_config != "-") {
+    google::InitGoogleLogging(argv[0]);
+    FLAGS_logtostderr = 1;
+
+    const bool autotune_given = (autotune_config != "-");
+    const bool vanilla_given = (vanilla_config != "-");
+    if (autotune_given == vanilla_given) {
+        LOG(FATAL) << "Exactly one of autotune_config or vanilla_config must be supplied ("
+                   << "autotune_config=" << autotune_config
+                   << ", vanilla_config=" << vanilla_config << ")";
+    }
+
+    if (autotune_given) {
         ORB_SLAM3::Optimizer::mbLiveBAAutotune = true;
         try {
             ORB_SLAM3::Optimizer::msLiveBAConfig = ORB_SLAM3::LoadAutotuneConfig(autotune_config);
         } catch (const std::exception& e) {
-            std::cerr << "Failed to load autotune config '" << autotune_config << "': " << e.what() << std::endl;
-            return 1;
+            LOG(FATAL) << "Failed to load autotune config '" << autotune_config << "': " << e.what();
+        }
+    } else {
+        try {
+            ORB_SLAM3::Optimizer::msVanillaConfig = ORB_SLAM3::LoadVanillaConfig(vanilla_config);
+        } catch (const std::exception& e) {
+            LOG(FATAL) << "Failed to load vanilla config '" << vanilla_config << "': " << e.what();
         }
     }
 

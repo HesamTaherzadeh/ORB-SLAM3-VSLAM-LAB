@@ -110,6 +110,34 @@ AutotuneConfig LoadAutotuneConfig(const std::string& path)
     return config;
 }
 
+/**
+ * Patched By Hesam
+ */
+VanillaConfig LoadVanillaConfig(const std::string& path)
+{
+    if(!std::ifstream(path).good())
+        throw std::runtime_error("LoadVanillaConfig: could not open " + path);
+
+    cv::FileStorage fs(path, cv::FileStorage::READ);
+    if(!fs.isOpened())
+        throw std::runtime_error("LoadVanillaConfig: could not parse " + path);
+
+    VanillaConfig config;
+
+    cv::FileNode node = fs["vanilla"];
+    if(node.empty())
+        node = fs.root();
+
+    ReadIfPresent(node, "stop_criteria_threshold", config.stop_criteria_threshold);
+    ReadIfPresent(node, "num_iterations", config.num_iterations);
+
+    LOG(INFO) << "[VANILLA CONFIG] loaded from " << path;
+    LOG(INFO) << "[VANILLA CONFIG] stop_criteria_threshold=" << config.stop_criteria_threshold
+              << " num_iterations=" << config.num_iterations;
+
+    return config;
+}
+
 namespace
 {
 

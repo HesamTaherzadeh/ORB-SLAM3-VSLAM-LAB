@@ -59,6 +59,7 @@ bool sortByVal(const pair<MapPoint*, int> &a, const pair<MapPoint*, int> &b)
  */
 bool Optimizer::mbLiveBAAutotune = false;
 AutotuneConfig Optimizer::msLiveBAConfig = AutotuneConfig();
+VanillaConfig Optimizer::msVanillaConfig = VanillaConfig();
 
 void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
 {
@@ -1452,8 +1453,12 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     }
     else
     {
+        /**
+         * Patched By Hesam
+         */
+        solver->setStopCriteriaThreshold(Optimizer::msVanillaConfig.stop_criteria_threshold);
         optimizer.initializeOptimization();
-        optimizer.optimize(10);
+        optimizer.optimize(Optimizer::msVanillaConfig.num_iterations);
     }
 
     vector<pair<KeyFrame*,MapPoint*> > vToErase;
@@ -2715,12 +2720,6 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
     vector<EdgeMono*> vpEdgesMono;
     vpEdgesMono.reserve(nExpectedSize);
 
-    /**
-     * Patched By Hesam
-     */
-    vector<int> vnOctaveMono;
-    vnOctaveMono.reserve(nExpectedSize);
-
     vector<KeyFrame*> vpEdgeKFMono;
     vpEdgeKFMono.reserve(nExpectedSize);
 
@@ -2730,12 +2729,6 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
     // Stereo
     vector<EdgeStereo*> vpEdgesStereo;
     vpEdgesStereo.reserve(nExpectedSize);
-
-    /**
-     * Patched By Hesam
-     */
-    vector<int> vnOctaveStereo;
-    vnOctaveStereo.reserve(nExpectedSize);
 
     vector<KeyFrame*> vpEdgeKFStereo;
     vpEdgeKFStereo.reserve(nExpectedSize);
@@ -2816,10 +2809,6 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
 
                     optimizer.addEdge(e);
                     vpEdgesMono.push_back(e);
-                    /**
-                     * Patched By Hesam
-                     */
-                    vnOctaveMono.push_back(kpUn.octave);
                     vpEdgeKFMono.push_back(pKFi);
                     vpMapPointEdgeMono.push_back(pMP);
                 }
@@ -2851,10 +2840,6 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
 
                     optimizer.addEdge(e);
                     vpEdgesStereo.push_back(e);
-                    /**
-                     * Patched By Hesam
-                     */
-                    vnOctaveStereo.push_back(kpUn.octave);
                     vpEdgeKFStereo.push_back(pKFi);
                     vpMapPointEdgeStereo.push_back(pMP);
                 }
@@ -2889,10 +2874,6 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
 
                         optimizer.addEdge(e);
                         vpEdgesMono.push_back(e);
-                        /**
-                         * Patched By Hesam
-                         */
-                        vnOctaveMono.push_back(kpUn.octave);
                         vpEdgeKFMono.push_back(pKFi);
                         vpMapPointEdgeMono.push_back(pMP);
                     }
@@ -2910,28 +2891,10 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
     optimizer.initializeOptimization();
     optimizer.computeActiveErrors();
     float err = optimizer.activeRobustChi2();
-
-    /**
-     * Patched By Hesam
-     */
-    if(Optimizer::mbLiveBAAutotune)
-    {
-        if(pbStopFlag)
-            optimizer.setForceStopFlag(pbStopFlag);
-
-        std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end());
-        std::vector<g2o::OptimizableGraph::Edge*> vpEdgesStereoGeneric(vpEdgesStereo.begin(), vpEdgesStereo.end());
-        RunLiveOctaveAutotune(optimizer, vpEdgesMonoGeneric, vnOctaveMono, vpEdgesStereoGeneric, vnOctaveStereo,
-                              Optimizer::msLiveBAConfig, pbStopFlag);
-    }
-    else
-    {
-        optimizer.optimize(opt_it); // Originally to 2
-        if(pbStopFlag)
-            optimizer.setForceStopFlag(pbStopFlag);
-    }
-
+    optimizer.optimize(opt_it); // Originally to 2
     float err_end = optimizer.activeRobustChi2();
+    if(pbStopFlag)
+        optimizer.setForceStopFlag(pbStopFlag);
 
     vector<pair<KeyFrame*,MapPoint*> > vToErase;
     vToErase.reserve(vpEdgesMono.size()+vpEdgesStereo.size());
