@@ -13,6 +13,7 @@
  */
 #include "Optimizer.h"
 #include "autotune/Autotune.h"
+#include "cov_auto_tune/config_yaml.h"
 #include <glog/logging.h>
 
 #include <sstream>
@@ -59,55 +60,54 @@ int main(int argc, char **argv)
     double playback_speed{1.0};
 
     string vocabulary{"Vocabulary/ORBvoc.txt"};
-    cout << endl;
     for (int i = 0; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg.find("sequence_path:") != std::string::npos) {
             removeSubstring(arg, "sequence_path:");
             sequence_path =  arg;
-            std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to sequence = " << sequence_path << std::endl;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to sequence = " << sequence_path;
             continue;
         }
         if (arg.find("calibration_yaml:") != std::string::npos) {
             removeSubstring(arg, "calibration_yaml:");
             calibration_yaml =  arg;
-            std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to calibration.yaml = " << calibration_yaml << std::endl;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to calibration.yaml = " << calibration_yaml;
             continue;
         }
         if (arg.find("rgb_csv:") != std::string::npos) {
             removeSubstring(arg, "rgb_csv:");
             rgb_csv =  arg;
-            std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to rgb_csv = " << rgb_csv << std::endl;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to rgb_csv = " << rgb_csv;
             continue;
         }
         if (arg.find("exp_folder:") != std::string::npos) {
             removeSubstring(arg, "exp_folder:");
             exp_folder =  arg;
-            std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to exp_folder = " << exp_folder << std::endl;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to exp_folder = " << exp_folder;
             continue;
         }
         if (arg.find("exp_id:") != std::string::npos) {
             removeSubstring(arg, "exp_id:");
             exp_id =  arg;
-            std::cout << "[vslamlab_orbslam3_stereo.cpp] Exp id = " << exp_id << std::endl;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Exp id = " << exp_id;
             continue;
         }
         if (arg.find("settings_yaml:") != std::string::npos) {
             removeSubstring(arg, "settings_yaml:");
             settings_yaml =  arg;
-            std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to settings_yaml = " << settings_yaml << std::endl;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to settings_yaml = " << settings_yaml;
             continue;
         }
         if (arg.find("verbose:") != std::string::npos) {
             removeSubstring(arg, "verbose:");
             verbose = bool(std::stoi(arg));
-            std::cout << "[vslamlab_orbslam3_stereo.cpp] Activate Visualization = " << verbose << std::endl;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Activate Visualization = " << verbose;
             continue;
         }
         if (arg.find("vocabulary:") != std::string::npos) {
             removeSubstring(arg, "vocabulary:");
             vocabulary = arg;
-            std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to vocabulary = " << vocabulary << std::endl;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to vocabulary = " << vocabulary;
             continue;
         }
         /**
@@ -116,25 +116,25 @@ int main(int argc, char **argv)
         if (arg.find("autotune_config:") != std::string::npos) {
             removeSubstring(arg, "autotune_config:");
             autotune_config = arg;
-            std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to autotune_config = " << autotune_config << std::endl;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to autotune_config = " << autotune_config;
             continue;
         }
         if (arg.find("loop_closing:") != std::string::npos) {
             removeSubstring(arg, "loop_closing:");
             loop_closing = std::stoi(arg) != 0;
-            std::cout << "[vslamlab_orbslam3_stereo.cpp] loop_closing = " << loop_closing << std::endl;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] loop_closing = " << loop_closing;
             continue;
         }
         if (arg.find("playback_speed:") != std::string::npos) {
             removeSubstring(arg, "playback_speed:");
             playback_speed = std::stod(arg);
-            std::cout << "[vslamlab_orbslam3_stereo.cpp] playback_speed = " << playback_speed << std::endl;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] playback_speed = " << playback_speed;
             continue;
         }
         if (arg.find("vanilla_config:") != std::string::npos) {
             removeSubstring(arg, "vanilla_config:");
             vanilla_config = arg;
-            std::cout << "[vslamlab_orbslam3_stereo.cpp] Path to vanilla_config = " << vanilla_config << std::endl;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to vanilla_config = " << vanilla_config;
             continue;
         }
     }
@@ -158,7 +158,7 @@ int main(int argc, char **argv)
     if (autotune_given) {
         ORB_SLAM3::Optimizer::mbLiveBAAutotune = true;
         try {
-            ORB_SLAM3::Optimizer::msLiveBAConfig = ORB_SLAM3::LoadAutotuneConfig(autotune_config);
+            ORB_SLAM3::Optimizer::msLiveBAConfig = cov_auto_tune::configFromYamlFile(autotune_config);
         } catch (const std::exception& e) {
             LOG(FATAL) << "Failed to load autotune config '" << autotune_config << "': " << e.what();
         }
@@ -192,9 +192,9 @@ int main(int argc, char **argv)
     vector<ORB_SLAM3::Seconds> vTimesTrack;
     vTimesTrack.resize(nImages);
 
-    cout << endl << "-------" << endl;
-    cout << "Start processing sequence ..." << endl;
-    cout << "Images in the sequence: " << nImages << endl << endl;
+    LOG(INFO) << "-------";
+    LOG(INFO) << "Start processing sequence ...";
+    LOG(INFO) << "Images in the sequence: " << nImages;
 
     // Main loop
     cv::Mat imLeft, imRight;
@@ -246,9 +246,9 @@ int main(int argc, char **argv)
     {
         totaltime+=vTimesTrack[ni];
     }
-    cout << "-------" << endl << endl;
-    cout << "median tracking time: " << vTimesTrack[nImages/2] << endl;
-    cout << "mean tracking time: " << totaltime/nImages << endl;
+    LOG(INFO) << "-------";
+    LOG(INFO) << "median tracking time: " << vTimesTrack[nImages/2];
+    LOG(INFO) << "mean tracking time: " << totaltime/nImages;
 
     // Save camera trajectory
     string resultsPath_expId = exp_folder + "/" + paddingZeros(exp_id);
@@ -320,7 +320,7 @@ void LoadImages(const string &pathToSequence, const string &rgb_csv,
         std::string rel_rgb0_path = tokens[rgb0_idx];
         std::string rel_rgb1_path = tokens[rgb1_idx];
 
-        ORB_SLAM3::Seconds t = static_cast<double>(std::stoll(t_str)) * 1e-9;
+        ORB_SLAM3::Seconds t = static_cast<double>(std::stoll(t_str)) * 1e-9; //Convert to ns to seconds
 
         timestamps.push_back(t);
         imageFilenames_l.push_back(pathToSequence + "/" + rel_rgb0_path);

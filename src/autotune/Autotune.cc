@@ -35,81 +35,6 @@ void ReadIfPresent(const cv::FileNode& node, const std::string& name, T& value)
 
 } // namespace
 
-AutotuneConfig LoadAutotuneConfig(const std::string& path)
-{
-    if(!std::ifstream(path).good())
-        throw std::runtime_error("LoadAutotuneConfig: could not open " + path);
-
-    cv::FileStorage fs(path, cv::FileStorage::READ);
-    if(!fs.isOpened())
-        throw std::runtime_error("LoadAutotuneConfig: could not parse " + path);
-
-    AutotuneConfig config;
-
-    cv::FileNode node = fs["autotune"];
-    if(node.empty())
-        node = fs.root();
-
-    ReadIfPresent(node, "outer_iterations", config.outer_iterations);
-    ReadIfPresent(node, "inner_iterations", config.inner_iterations);
-    ReadIfPresent(node, "tune_iterations", config.tune_iterations);
-    ReadIfPresent(node, "pre_iterations", config.pre_iterations);
-    ReadIfPresent(node, "post_iterations", config.post_iterations);
-    ReadIfPresent(node, "prior_strength", config.prior_strength);
-    ReadIfPresent(node, "use_wishart_prior", config.use_wishart_prior);
-    ReadIfPresent(node, "use_k_as_denom", config.use_k_as_denom);
-    ReadIfPresent(node, "diagonal_constraint", config.diagonal_constraint);
-    ReadIfPresent(node, "use_identity_prior", config.use_identity_prior);
-    ReadIfPresent(node, "huber_delta_mono", config.huber_delta_mono);
-    ReadIfPresent(node, "huber_delta_stereo", config.huber_delta_stereo);
-    ReadIfPresent(node, "verbose", config.verbose);
-
-    const cv::FileNode solver_node = fs["solver"];
-    if(!solver_node.empty())
-    {
-        ReadIfPresent(solver_node, "min_eig_cov", config.min_eig_cov);
-        ReadIfPresent(solver_node, "max_eig_cov", config.max_eig_cov);
-
-        const cv::FileNode octave_bands_node = solver_node["octave_bands"];
-        if(!octave_bands_node.empty())
-        {
-            if(!octave_bands_node.isSeq())
-                throw std::runtime_error("solver.octave_bands must be a YAML sequence");
-
-            std::vector<std::vector<int>> bands;
-            for(auto band_it = octave_bands_node.begin(); band_it != octave_bands_node.end(); ++band_it)
-            {
-                std::vector<int> octaves;
-                ReadIfPresent(*band_it, "octaves", octaves);
-                if(!octaves.empty())
-                    bands.push_back(octaves);
-            }
-            if(!bands.empty())
-                config.octave_bands = bands;
-        }
-    }
-
-    LOG(INFO) << "[AUTOTUNE CONFIG] loaded from " << path;
-    LOG(INFO) << "[AUTOTUNE CONFIG] outer_iterations=" << config.outer_iterations
-              << " inner_iterations=" << config.inner_iterations
-              << " tune_iterations=" << config.tune_iterations
-              << " pre_iterations=" << config.pre_iterations
-              << " post_iterations=" << config.post_iterations;
-    LOG(INFO) << "[AUTOTUNE CONFIG] prior_strength=" << config.prior_strength
-              << " use_wishart_prior=" << config.use_wishart_prior
-              << " use_k_as_denom=" << config.use_k_as_denom
-              << " diagonal_constraint=" << config.diagonal_constraint
-              << " use_identity_prior=" << config.use_identity_prior
-              << " verbose=" << config.verbose;
-    LOG(INFO) << "[AUTOTUNE CONFIG] min_eig_cov=" << config.min_eig_cov
-              << " max_eig_cov=" << config.max_eig_cov
-              << " huber_delta_mono=" << config.huber_delta_mono
-              << " huber_delta_stereo=" << config.huber_delta_stereo
-              << " octave_bands=" << config.octave_bands.size();
-
-    return config;
-}
-
 /**
  * Patched By Hesam
  */
@@ -155,7 +80,7 @@ int OctaveBandIndex(int octave, const std::vector<std::vector<int>>& octaveBands
 void RegisterGroups(
     const std::map<int, std::vector<g2o::OptimizableGraph::Edge*>>& groups,
     int dimension,
-    const AutotuneConfig& config,
+    const cov_auto_tune::AutotunerConfig& config,
     cov_auto_tune::core::GroupRegistry& registry)
 {
     int groupIndex = 0;
@@ -187,8 +112,8 @@ void RegisterGroups(
         }
 
         cov_auto_tune::core::GroupCovarianceConfig groupConfig;
-        groupConfig.min_eig_cov = config.min_eig_cov;
-        groupConfig.max_eig_cov = config.max_eig_cov;
+        groupConfig.min_eig_cov = config.default_group_covariance.min_eig_cov;
+        groupConfig.max_eig_cov = config.default_group_covariance.max_eig_cov;
         groupConfig.prior_covariance_matrix = meanCovariance;
         groupConfig.prior_strength = config.prior_strength;
 
@@ -242,33 +167,24 @@ void RunLiveOctaveAutotune(
     const std::vector<int>& vnOctaveMono,
     const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesStereo,
     const std::vector<int>& vnOctaveStereo,
-    const AutotuneConfig& config,
+    const cov_auto_tune::AutotunerConfig& config,
     bool* pbStopFlag)
 {
     const EdgeGroups groups =
         GroupByOctaveBand(vpEdgesMono, vnOctaveMono, vpEdgesStereo, vnOctaveStereo, config.octave_bands);
 
-    cov_auto_tune::core::GroupCovarianceConfig defaultGroupConfig;
-    defaultGroupConfig.min_eig_cov = config.min_eig_cov;
-    defaultGroupConfig.max_eig_cov = config.max_eig_cov;
-    defaultGroupConfig.prior_strength = config.prior_strength;
+    cov_auto_tune::AutotunerConfig tunerConfig = config;
+    tunerConfig.default_group_covariance.prior_strength = tunerConfig.prior_strength;
 
-    auto registry = std::make_shared<cov_auto_tune::core::GroupRegistry>(defaultGroupConfig);
+    auto registry = std::make_shared<cov_auto_tune::core::GroupRegistry>(tunerConfig.default_group_covariance);
 
     RegisterGroups(groups.mono, 2, config, *registry);
     RegisterGroups(groups.stereo, 3, config, *registry);
 
-    cov_auto_tune::AutotunerConfig tunerConfig;
     tunerConfig.grouping_method = cov_auto_tune::AutotunerConfig::GroupingMethod::ByCell;
     tunerConfig.allow_unregistered_edges = true;
     tunerConfig.group_registry = registry;
-    tunerConfig.use_wishart_prior = config.use_wishart_prior;
-    tunerConfig.use_k_as_denom = config.use_k_as_denom;
-    tunerConfig.prior_strength = config.prior_strength;
-    tunerConfig.default_group_covariance = defaultGroupConfig;
-    tunerConfig.diagonal_constraint = config.diagonal_constraint;
-    tunerConfig.verbose = config.verbose;
-    tunerConfig.verbose_diagnostics = config.verbose;
+    tunerConfig.verbose_diagnostics = tunerConfig.verbose;
 
     cov_auto_tune::g2o::Autotuner autotuner(&optimizer, tunerConfig);
 

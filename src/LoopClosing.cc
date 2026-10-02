@@ -28,6 +28,8 @@
 #include<mutex>
 #include<thread>
 
+#include <glog/logging.h>
+
 
 namespace ORB_SLAM3
 {
@@ -226,7 +228,7 @@ void LoopClosing::Run()
                     vdPR_MatchedTime.push_back(mpLoopMatchedKF->mTimeStamp);
                     vnPR_TypeRecogn.push_back(0);
 
-                    Verbose::PrintMess("*Loop detected", Verbose::VERBOSITY_QUIET);
+                    LOG(INFO) << "*Loop detected";
 
                     mg2oLoopScw = mg2oLoopSlw; //*mvg2oSim3LoopTcw[nCurrentIndex];
                     if(mpCurrentKF->GetMap()->IsInertial())

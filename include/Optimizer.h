@@ -56,7 +56,7 @@ public:
      * Patched By Hesam 
      */
     static bool mbLiveBAAutotune;
-    static AutotuneConfig msLiveBAConfig;
+    static cov_auto_tune::AutotunerConfig msLiveBAConfig;
     static VanillaConfig msVanillaConfig;
 
     void static BundleAdjustment(const std::vector<KeyFrame*> &vpKF, const std::vector<MapPoint*> &vpMP,

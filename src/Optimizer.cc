@@ -58,7 +58,7 @@ bool sortByVal(const pair<MapPoint*, int> &a, const pair<MapPoint*, int> &b)
  * Patched By Hesam
  */
 bool Optimizer::mbLiveBAAutotune = false;
-AutotuneConfig Optimizer::msLiveBAConfig = AutotuneConfig();
+cov_auto_tune::AutotunerConfig Optimizer::msLiveBAConfig = cov_auto_tune::AutotunerConfig();
 VanillaConfig Optimizer::msVanillaConfig = VanillaConfig();
 
 void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
@@ -1446,7 +1446,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
      */
     if(Optimizer::mbLiveBAAutotune)
     {   //edges and vector of their octaves.
-        std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end());
+        std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end()); //C++ members are invariant not covariant 
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesStereoGeneric(vpEdgesStereo.begin(), vpEdgesStereo.end());
         RunLiveOctaveAutotune(optimizer, vpEdgesMonoGeneric, vnOctaveMono, vpEdgesStereoGeneric, vnOctaveStereo,
                               Optimizer::msLiveBAConfig, pbStopFlag);
