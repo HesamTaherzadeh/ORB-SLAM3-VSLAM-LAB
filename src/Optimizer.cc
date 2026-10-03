@@ -1448,6 +1448,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     {   //edges and vector of their octaves.
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end()); //C++ members are invariant not covariant 
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesStereoGeneric(vpEdgesStereo.begin(), vpEdgesStereo.end());
+        solver->setStopCriteriaThreshold(Optimizer::msLiveBAConfig.stop_criteria_threshold);
         RunLiveOctaveAutotune(optimizer, vpEdgesMonoGeneric, vnOctaveMono, vpEdgesStereoGeneric, vnOctaveStereo,
                               Optimizer::msLiveBAConfig, pbStopFlag);
     }

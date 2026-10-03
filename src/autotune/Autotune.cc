@@ -152,11 +152,51 @@ EdgeGroups GroupByOctaveBand(
     const std::vector<std::vector<int>>& octaveBands)
 {
     EdgeGroups groups;
+    // for(size_t i = 0; i < vpEdgesMono.size(); ++i)
+    //     groups.mono[OctaveBandIndex(vnOctaveMono[i], octaveBands)].push_back(vpEdgesMono[i]);
+    // for(size_t i = 0; i < vpEdgesStereo.size(); ++i)
+    //     groups.stereo[OctaveBandIndex(vnOctaveStereo[i], octaveBands)].push_back(vpEdgesStereo[i]);
+
     for(size_t i = 0; i < vpEdgesMono.size(); ++i)
-        groups.mono[OctaveBandIndex(vnOctaveMono[i], octaveBands)].push_back(vpEdgesMono[i]);
+        groups.mono[vnOctaveMono[i]].push_back(vpEdgesMono[i]);
     for(size_t i = 0; i < vpEdgesStereo.size(); ++i)
-        groups.stereo[OctaveBandIndex(vnOctaveStereo[i], octaveBands)].push_back(vpEdgesStereo[i]);
+        groups.stereo[vnOctaveStereo[i]].push_back(vpEdgesStereo[i]);
     return groups;
+}
+
+void LogChi2ForType(
+    const char* stage,
+    const char* type,
+    const std::vector<g2o::OptimizableGraph::Edge*>& edges,
+    double huberDelta)
+{
+    if(edges.empty())
+        return;
+    double chi2Sum = 0.0;
+    size_t aboveThreshold = 0;
+    for(const auto* edge : edges)
+    {
+        const double chi2 = edge->chi2();
+        chi2Sum += chi2;
+        if(chi2 > huberDelta * huberDelta)
+            ++aboveThreshold;
+    }
+    LOG(INFO) << "[AUTOTUNE CHI2] " << stage << " " << type
+              << " edge_count=" << edges.size()
+              << " mean_chi2=" << chi2Sum / static_cast<double>(edges.size())
+              << " huber_delta=" << huberDelta
+              << " fraction_above_huber=" << static_cast<double>(aboveThreshold) / static_cast<double>(edges.size());
+}
+
+void LogChi2ByType(
+    const char* stage,
+    const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesMono,
+    const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesStereo,
+    double huberDeltaMono,
+    double huberDeltaStereo)
+{
+    LogChi2ForType(stage, "mono", vpEdgesMono, huberDeltaMono);
+    LogChi2ForType(stage, "stereo", vpEdgesStereo, huberDeltaStereo);
 }
 
 } // namespace
@@ -189,6 +229,8 @@ void RunLiveOctaveAutotune(
     cov_auto_tune::g2o::Autotuner autotuner(&optimizer, tunerConfig);
 
     optimizer.initializeOptimization();
+    optimizer.computeActiveErrors();
+    LogChi2ByType("initial", vpEdgesMono, vpEdgesStereo, config.huber_delta_mono, config.huber_delta_stereo);
 
     if(config.pre_iterations > 0 && !(pbStopFlag && *pbStopFlag))
         optimizer.optimize(config.pre_iterations);
@@ -210,6 +252,9 @@ void RunLiveOctaveAutotune(
 
     if(config.post_iterations > 0 && !(pbStopFlag && *pbStopFlag))
         optimizer.optimize(config.post_iterations);
+
+    optimizer.computeActiveErrors();
+    LogChi2ByType("final", vpEdgesMono, vpEdgesStereo, config.huber_delta_mono, config.huber_delta_stereo);
 }
 
 void SaveAutotuneClampStatsCSV(const std::string& path)
