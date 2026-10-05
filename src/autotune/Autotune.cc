@@ -81,7 +81,7 @@ void RegisterGroups(
     const std::map<int, std::vector<g2o::OptimizableGraph::Edge*>>& groups,
     int dimension,
     const cov_auto_tune::AutotunerConfig& config,
-    cov_auto_tune::core::GroupRegistry& registry)
+    cov_auto_tune::g2o::Groups& tunerGroups)
 {
     int groupIndex = 0;
 
@@ -111,24 +111,20 @@ void RegisterGroups(
             meanInformation = meanCovariance.inverse();
         }
 
-        cov_auto_tune::core::GroupCovarianceConfig groupConfig;
+        cov_auto_tune::g2o::Group& group = tunerGroups[
+            "residuals_dim_" + std::to_string(dimension) + "_octave_" + std::to_string(octave)];
+        cov_auto_tune::core::GroupCovarianceConfig& groupConfig = group.config;
         groupConfig.min_eig_cov = config.default_group_covariance.min_eig_cov;
         groupConfig.max_eig_cov = config.default_group_covariance.max_eig_cov;
         groupConfig.prior_covariance_matrix = meanCovariance;
         groupConfig.prior_strength = config.prior_strength;
 
-        const std::string groupLabel =
-            "residuals_dim_" + std::to_string(dimension) + "_octave_" + std::to_string(octave);
-        const cov_auto_tune::core::GroupKey groupKey =
-            registry.makeGroupKeyForEdgeType(groupLabel, groupIndex, dimension);
-        registry.registerGroup(groupKey, groupLabel, "", meanInformation);
-        registry.setGroupConfig(groupKey, groupConfig);
+        group.edges = groupEdges;
 
         for(auto* edge : groupEdges)
         {
             Eigen::Map<Eigen::MatrixXd> information(edge->informationData(), dimension, dimension);
             information = meanInformation;
-            cov_auto_tune::g2o::registerMeasurementGroup(registry, edge, groupKey);
         }
         ++groupIndex;
     }
@@ -216,17 +212,15 @@ void RunLiveOctaveAutotune(
     cov_auto_tune::AutotunerConfig tunerConfig = config;
     tunerConfig.default_group_covariance.prior_strength = tunerConfig.prior_strength;
 
-    auto registry = std::make_shared<cov_auto_tune::core::GroupRegistry>(tunerConfig.default_group_covariance);
-
-    RegisterGroups(groups.mono, 2, config, *registry);
-    RegisterGroups(groups.stereo, 3, config, *registry);
+    cov_auto_tune::g2o::Groups tunerGroups;
+    RegisterGroups(groups.mono, 2, config, tunerGroups);
+    RegisterGroups(groups.stereo, 3, config, tunerGroups);
 
     tunerConfig.grouping_method = cov_auto_tune::AutotunerConfig::GroupingMethod::ByCell;
     tunerConfig.allow_unregistered_edges = true;
-    tunerConfig.group_registry = registry;
     tunerConfig.verbose_diagnostics = tunerConfig.verbose;
 
-    cov_auto_tune::g2o::Autotuner autotuner(&optimizer, tunerConfig);
+    cov_auto_tune::g2o::Autotuner autotuner(&optimizer, tunerConfig, std::move(tunerGroups));
 
     optimizer.initializeOptimization();
     optimizer.computeActiveErrors();
