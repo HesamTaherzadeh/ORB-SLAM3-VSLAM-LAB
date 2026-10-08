@@ -4,6 +4,7 @@
 
 #include "autotune/Autotune.h"
 
+#include <algorithm>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -16,6 +17,7 @@
 
 #include "cov_auto_tune/autotuner_config.h"
 #include "cov_auto_tune/g2o/autotuner.h"
+#include "Thirdparty/g2o/g2o/types/types_six_dof_expmap.h"
 
 namespace ORB_SLAM3
 {
@@ -140,6 +142,27 @@ struct EdgeGroups
     std::map<int, std::vector<g2o::OptimizableGraph::Edge*>> stereo;
 };
 
+// Depth-quantile grouping (batch5), disabled: octave grouping is active again in GroupByOctaveBand below.
+// // Sort by depth and cut into nBands groups of equal size; key 0 = nearest.
+// std::map<int, std::vector<g2o::OptimizableGraph::Edge*>> GroupByDepthQuantile(
+//     const std::vector<g2o::OptimizableGraph::Edge*>& edges, size_t nBands)
+// {
+//     std::vector<std::pair<double, g2o::OptimizableGraph::Edge*>> byDepth;
+//     byDepth.reserve(edges.size());
+//     for(auto* e : edges)
+//     {
+//         const auto* point = static_cast<const g2o::VertexSBAPointXYZ*>(e->vertex(0));
+//         const auto* pose = static_cast<const g2o::VertexSE3Expmap*>(e->vertex(1));
+//         byDepth.emplace_back(pose->estimate().map(point->estimate()).z(), e);
+//     }
+//     std::sort(byDepth.begin(), byDepth.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+
+//     std::map<int, std::vector<g2o::OptimizableGraph::Edge*>> groups;
+//     for(size_t i = 0; i < byDepth.size(); ++i)
+//         groups[i * nBands / byDepth.size()].push_back(byDepth[i].second);
+//     return groups;
+// }
+
 EdgeGroups GroupByOctaveBand(
     const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesMono,
     const std::vector<int>& vnOctaveMono,
@@ -152,6 +175,9 @@ EdgeGroups GroupByOctaveBand(
     //     groups.mono[OctaveBandIndex(vnOctaveMono[i], octaveBands)].push_back(vpEdgesMono[i]);
     // for(size_t i = 0; i < vpEdgesStereo.size(); ++i)
     //     groups.stereo[OctaveBandIndex(vnOctaveStereo[i], octaveBands)].push_back(vpEdgesStereo[i]);
+
+    // groups.mono = GroupByDepthQuantile(vpEdgesMono, octaveBands.size());
+    // groups.stereo = GroupByDepthQuantile(vpEdgesStereo, octaveBands.size());
 
     for(size_t i = 0; i < vpEdgesMono.size(); ++i)
         groups.mono[vnOctaveMono[i]].push_back(vpEdgesMono[i]);
