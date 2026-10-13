@@ -42,6 +42,7 @@ LoopClosing::LoopClosing(Atlas *pAtlas, KeyFrameDatabase *pDB, ORBVocabulary *pV
 {
     mnCovisibilityConsistencyTh = 3;
     mpLastCurrentKF = static_cast<KeyFrame*>(NULL);
+    mpCurrentKF = static_cast<KeyFrame*>(NULL);   // Patched By Hesam: never set when loop closing is off (NewDetectCommonRegions returns first), but Run() copies it into mpLastCurrentKF and dereferences it
 
 #ifdef REGISTER_TIMES
 

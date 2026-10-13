@@ -5,14 +5,17 @@
 #include "autotune/Autotune.h"
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <vector>
 
 #include <glog/logging.h>
+#include <nlohmann/json.hpp>
 #include <opencv2/core/persistence.hpp>
 
 #include "cov_auto_tune/autotuner_config.h"
@@ -24,8 +27,16 @@ namespace ORB_SLAM3
 namespace
 {
 
-// {outer_iteration, tune_iteration, pct_low, pct_high} per Autotuner::tune() call.
-std::vector<std::tuple<int, int, double, double>> g_autotuneClampStats;
+// One record per local BA, kept in memory during the run and written once at shutdown by SaveAutotuneStats:
+// {"ba", "time_s",
+//  "optimizations": [{stage (pre / inner / post), requested, iterations (done; 0 = solver failed),
+//                     reached_stop_criterion (g2o stopped before the requested iterations on its own),
+//                     tracking_stop_flag (Tracking's abort flag, pbStopFlag, was set after this optimize())}],
+//  "chi2": [{stage (initial / final), type (mono / stereo), edges, mean_chi2, huber_delta, frac_above_huber}],
+//  "groups": [{group, edges, after the last tune():
+//              information (matrix written to the edges), cov_eigenvalues (of its inverse, ascending),
+//              cov_eigenvalues_before_clamp, flags (per eigenvalue: -1 min_eig_cov, 0 free, +1 max_eig_cov)}]}
+nlohmann::json g_autotuneBAs = nlohmann::json::array();
 
 template<typename T>
 void ReadIfPresent(const cv::FileNode& node, const std::string& name, T& value)
@@ -57,10 +68,14 @@ VanillaConfig LoadVanillaConfig(const std::string& path)
 
     ReadIfPresent(node, "stop_criteria_threshold", config.stop_criteria_threshold);
     ReadIfPresent(node, "num_iterations", config.num_iterations);
+    ReadIfPresent(node, "correlationcoeff_uLuR", config.correlationcoeff_uLuR);
+    if(config.correlationcoeff_uLuR <= -1.0 || config.correlationcoeff_uLuR >= 1.0)
+        throw std::runtime_error("LoadVanillaConfig: correlationcoeff_uLuR must be in (-1, 1)");
 
     LOG(INFO) << "[VANILLA CONFIG] loaded from " << path;
     LOG(INFO) << "[VANILLA CONFIG] stop_criteria_threshold=" << config.stop_criteria_threshold
-              << " num_iterations=" << config.num_iterations;
+              << " num_iterations=" << config.num_iterations
+              << " correlationcoeff_uLuR=" << config.correlationcoeff_uLuR;
 
     return config;
 }
@@ -186,7 +201,7 @@ EdgeGroups GroupByOctaveBand(
     return groups;
 }
 
-void LogChi2ForType(
+void RecordChi2ForType(
     const char* stage,
     const char* type,
     const std::vector<g2o::OptimizableGraph::Edge*>& edges,
@@ -203,22 +218,20 @@ void LogChi2ForType(
         if(chi2 > huberDelta * huberDelta)
             ++aboveThreshold;
     }
-    LOG(INFO) << "[AUTOTUNE CHI2] " << stage << " " << type
-              << " edge_count=" << edges.size()
-              << " mean_chi2=" << chi2Sum / static_cast<double>(edges.size())
-              << " huber_delta=" << huberDelta
-              << " fraction_above_huber=" << static_cast<double>(aboveThreshold) / static_cast<double>(edges.size());
+    g_autotuneBAs.back()["chi2"].push_back({{"stage", stage}, {"type", type}, {"edges", edges.size()},
+                                            {"mean_chi2", chi2Sum / static_cast<double>(edges.size())}, {"huber_delta", huberDelta},
+                                            {"frac_above_huber", static_cast<double>(aboveThreshold) / static_cast<double>(edges.size())}});
 }
 
-void LogChi2ByType(
+void RecordChi2ByType(
     const char* stage,
     const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesMono,
     const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesStereo,
     double huberDeltaMono,
     double huberDeltaStereo)
 {
-    LogChi2ForType(stage, "mono", vpEdgesMono, huberDeltaMono);
-    LogChi2ForType(stage, "stereo", vpEdgesStereo, huberDeltaStereo);
+    RecordChi2ForType(stage, "mono", vpEdgesMono, huberDeltaMono);
+    RecordChi2ForType(stage, "stereo", vpEdgesStereo, huberDeltaStereo);
 }
 
 } // namespace
@@ -232,6 +245,18 @@ void RunLiveOctaveAutotune(
     const cov_auto_tune::AutotunerConfig& config,
     bool* pbStopFlag)
 {
+    const auto start = std::chrono::steady_clock::now();
+    g_autotuneBAs.push_back({{"ba", g_autotuneBAs.size()}, {"chi2", nlohmann::json::array()}, {"groups", nlohmann::json::array()}});
+    auto& record = g_autotuneBAs.back();
+    record["optimizations"] = nlohmann::json::array();
+    const auto optimize = [&](const char* stage, int requested)
+    {
+        const int iterations = optimizer.optimize(requested);
+        const bool optimizationStop = pbStopFlag && *pbStopFlag;
+        record["optimizations"].push_back({{"stage", stage}, {"requested", requested}, {"iterations", iterations},
+                                           {"reached_stop_criterion", iterations > 0 && iterations < requested && !optimizationStop},
+                                           {"tracking_stop_flag", optimizationStop}});
+    };
     const EdgeGroups groups =
         GroupByOctaveBand(vpEdgesMono, vnOctaveMono, vpEdgesStereo, vnOctaveStereo, config.octave_bands);
 
@@ -244,53 +269,72 @@ void RunLiveOctaveAutotune(
 
     tunerConfig.grouping_method = cov_auto_tune::AutotunerConfig::GroupingMethod::ByCell;
     tunerConfig.allow_unregistered_edges = true;
-    tunerConfig.verbose_diagnostics = tunerConfig.verbose;
+    tunerConfig.verbose = false;               // nothing printed during the run
+    tunerConfig.verbose_diagnostics = false;
 
     cov_auto_tune::g2o::Autotuner autotuner(&optimizer, tunerConfig, std::move(tunerGroups));
 
     optimizer.initializeOptimization();
     optimizer.computeActiveErrors();
-    LogChi2ByType("initial", vpEdgesMono, vpEdgesStereo, config.huber_delta_mono, config.huber_delta_stereo);
+    RecordChi2ByType("initial", vpEdgesMono, vpEdgesStereo, config.huber_delta_mono, config.huber_delta_stereo);
 
     if(config.pre_iterations > 0 && !(pbStopFlag && *pbStopFlag))
-        optimizer.optimize(config.pre_iterations);
+        optimize("pre", config.pre_iterations);
 
     for(int outer = 0; outer < config.outer_iterations && !(pbStopFlag && *pbStopFlag); ++outer)
     {
         for(int t = 0; t < config.tune_iterations && !(pbStopFlag && *pbStopFlag); ++t)
         {
             autotuner.tune();
-            const cov_auto_tune::g2o::ClampHitPercentages pct = autotuner.lastClampHitPercentages();
-            g_autotuneClampStats.emplace_back(outer, t, pct.lower_pct, pct.upper_pct);
         }
-        
-        autotuner.printGroups();
 
         if(!(pbStopFlag && *pbStopFlag))
-            optimizer.optimize(config.inner_iterations);
+            optimize("inner", config.inner_iterations);
     }
 
     if(config.post_iterations > 0 && !(pbStopFlag && *pbStopFlag))
-        optimizer.optimize(config.post_iterations);
+        optimize("post", config.post_iterations);
 
     optimizer.computeActiveErrors();
-    LogChi2ByType("final", vpEdgesMono, vpEdgesStereo, config.huber_delta_mono, config.huber_delta_stereo);
+    RecordChi2ByType("final", vpEdgesMono, vpEdgesStereo, config.huber_delta_mono, config.huber_delta_stereo);
+
+    for(const auto& [label, group] : autotuner.groups())
+    {
+        nlohmann::json information = nlohmann::json::array();
+        for(int r = 0; r < group.information.rows(); ++r)
+        {
+            nlohmann::json row = nlohmann::json::array();
+            for(int c = 0; c < group.information.cols(); ++c)
+                row.push_back(group.information(r, c));
+            information.push_back(row);
+        }
+        // the covariance eigenvalues the last tune() used (ascending): its eigenvalues before the clamp, the flagged ones on their bound
+        nlohmann::json covEigenvalues = nlohmann::json::array();
+        for(size_t i = 0; i < group.covariance_before_clamp.size(); ++i)
+        {
+            if(group.clamp_flags[i] < 0)
+                covEigenvalues.push_back(group.config.min_eig_cov);
+            else if(group.clamp_flags[i] > 0)
+                covEigenvalues.push_back(group.config.max_eig_cov);
+            else
+                covEigenvalues.push_back(group.covariance_before_clamp[i]);
+        }
+        record["groups"].push_back({{"group", label}, {"edges", group.edges.size()}, {"information", information},
+                                    {"cov_eigenvalues", covEigenvalues}, {"cov_eigenvalues_before_clamp", group.covariance_before_clamp},
+                                    {"flags", group.clamp_flags}});
+    }
+    record["time_s"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
 
-void SaveAutotuneClampStatsCSV(const std::string& path)
+void SaveAutotuneStats(const std::string& path)
 {
     std::ofstream f(path);
     if(!f.is_open())
     {
-        LOG(ERROR) << "[AUTOTUNE] SaveAutotuneClampStatsCSV: could not open " << path;
+        LOG(ERROR) << "[AUTOTUNE] SaveAutotuneStats: could not open " << path;
         return;
     }
-
-    f << "outer,tune,pct_low,pct_high\n";
-    for(const auto& [outer, tune, pct_low, pct_high] : g_autotuneClampStats)
-        f << outer << ',' << tune << ',' << pct_low << ',' << pct_high << '\n';
-
-    LOG(INFO) << "[AUTOTUNE] Saved " << g_autotuneClampStats.size() << " clamp-stat rows to " << path;
+    f << g_autotuneBAs.dump(2) << '\n';
 }
 
 } // namespace ORB_SLAM3

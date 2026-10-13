@@ -235,8 +235,7 @@ int main(int argc, char **argv)
      * Patched By Hesam
      */
     if (ORB_SLAM3::Optimizer::mbLiveBAAutotune) {
-        string clampStatsPath = exp_folder + "/" + paddingZeros(exp_id) + "_autotune_clamp_stats.csv";
-        ORB_SLAM3::SaveAutotuneClampStatsCSV(clampStatsPath);
+        ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_autotune.json");
     }
 
     // Tracking time statistics

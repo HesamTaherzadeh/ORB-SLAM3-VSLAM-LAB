@@ -13,6 +13,11 @@
 #include<System.h>
 #include "ImuTypes.h"
 
+#include "Optimizer.h"
+#include "autotune/Autotune.h"
+#include "cov_auto_tune/config_yaml.h"
+#include <glog/logging.h>
+
 using namespace std;
 namespace ORB_SLAM3{
     using Seconds = double;
@@ -49,6 +54,10 @@ int main(int argc, char *argv[])
     bool verbose{true};
 
     string vocabulary{"Vocabulary/ORBvoc.txt"};
+    string autotune_config{"-"};
+    string vanilla_config{"-"};
+    bool loop_closing{true};
+    double playback_speed{1.0};
     cout << endl;
     for (int i = 0; i < argc; ++i) {
         std::string arg = argv[i];
@@ -99,6 +108,59 @@ int main(int argc, char *argv[])
             vocabulary = arg;
             std::cout << "[vslamlab_orbslam3_stereo_vi.cpp] Path to vocabulary = " << vocabulary << std::endl;
             continue;
+        }
+        if (arg.find("autotune_config:") != std::string::npos) {
+            removeSubstring(arg, "autotune_config:");
+            autotune_config = arg;
+            std::cout << "[vslamlab_orbslam3_stereo_vi.cpp] Path to autotune_config = " << autotune_config << std::endl;
+            continue;
+        }
+        if (arg.find("loop_closing:") != std::string::npos) {
+            removeSubstring(arg, "loop_closing:");
+            loop_closing = std::stoi(arg) != 0;
+            std::cout << "[vslamlab_orbslam3_stereo_vi.cpp] loop_closing = " << loop_closing << std::endl;
+            continue;
+        }
+        if (arg.find("playback_speed:") != std::string::npos) {
+            removeSubstring(arg, "playback_speed:");
+            playback_speed = std::stod(arg);
+            std::cout << "[vslamlab_orbslam3_stereo_vi.cpp] playback_speed = " << playback_speed << std::endl;
+            continue;
+        }
+        if (arg.find("vanilla_config:") != std::string::npos) {
+            removeSubstring(arg, "vanilla_config:");
+            vanilla_config = arg;
+            std::cout << "[vslamlab_orbslam3_stereo_vi.cpp] Path to vanilla_config = " << vanilla_config << std::endl;
+            continue;
+        }
+    }
+
+    google::InitGoogleLogging(argv[0]);
+    FLAGS_logtostderr = 1;
+    google::InstallFailureSignalHandler();   // on SIGSEGV etc.: print the stack trace of the crashing thread to the log
+
+    ORB_SLAM3::System::mbLoopClosingEnabled = loop_closing;
+
+    const bool autotune_given = (autotune_config != "-");
+    const bool vanilla_given = (vanilla_config != "-");
+    if (autotune_given == vanilla_given) {
+        LOG(FATAL) << "Exactly one of autotune_config or vanilla_config must be supplied ("
+                   << "autotune_config=" << autotune_config
+                   << ", vanilla_config=" << vanilla_config << ")";
+    }
+
+    if (autotune_given) {
+        ORB_SLAM3::Optimizer::mbLiveBAAutotune = true;
+        try {
+            ORB_SLAM3::Optimizer::msLiveBAConfig = cov_auto_tune::configFromYamlFile(autotune_config);
+        } catch (const std::exception& e) {
+            LOG(FATAL) << "Failed to load autotune config '" << autotune_config << "': " << e.what();
+        }
+    } else {
+        try {
+            ORB_SLAM3::Optimizer::msVanillaConfig = ORB_SLAM3::LoadVanillaConfig(vanilla_config);
+        } catch (const std::exception& e) {
+            LOG(FATAL) << "Failed to load vanilla config '" << vanilla_config << "': " << e.what();
         }
     }
 
@@ -171,12 +233,19 @@ int main(int argc, char *argv[])
         else if(ni > 0)
             T = tframe - timestampsCam[ni-1];
 
+        if(playback_speed > 0.0)
+            T /= playback_speed;
+
         if(ttrack < T)
             usleep((T-ttrack)  * 1e6);
     }
 
     // Stop all threads
     SLAM.Shutdown();
+
+    if (ORB_SLAM3::Optimizer::mbLiveBAAutotune) {
+        ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_autotune.json");
+    }
 
     // Save camera trajectory
     string resultsPath_expId = exp_folder + "/" + paddingZeros(exp_id);

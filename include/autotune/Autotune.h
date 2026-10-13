@@ -23,11 +23,13 @@ struct VanillaConfig
 {
     double stop_criteria_threshold = 1e-3;
     int num_iterations = 10;
+    double correlationcoeff_uLuR = 0.0;   // correlation of uL and uR in the stereo covariance of the local BA (0 = original vanilla)
 };
 
 VanillaConfig LoadVanillaConfig(const std::string& path);
 
-void SaveAutotuneClampStatsCSV(const std::string& path);
+// writes one JSON record per local BA: chi2 before / after and the clamp flags of every group after the last tune()
+void SaveAutotuneStats(const std::string& path);
 
 void RunLiveOctaveAutotune(
     g2o::SparseOptimizer& optimizer,

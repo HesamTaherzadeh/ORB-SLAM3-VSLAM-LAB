@@ -1351,8 +1351,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
                     optimizer.addEdge(e);
                     vpEdgesMono.push_back(e);
                     /**
-                     * Patched By Hesam
-                     */
+                    * Patched By Hesam
+                    */
                     vnOctaveMono.push_back(kpUn.octave);
                     vpEdgeKFMono.push_back(pKFi);
                     vpMapPointEdgeMono.push_back(pMP);
@@ -1372,8 +1372,22 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
                     e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKFi->mnId)));
                     e->setMeasurement(obs);
                     const float &invSigma2 = pKFi->mvInvLevelSigma2[kpUn.octave];
-                    Eigen::Matrix3d Info = Eigen::Matrix3d::Identity()*invSigma2;
-                    e->setInformation(Info);
+                    /**
+                     * Patched By Hesam: vanilla only, optional correlation of uL and uR, set on the covariance and then inverted.
+                     * Cov = sigma^2 [[1,0,rho],[0,1,0],[rho,0,1]], Info = Cov^-1. rho = 0 keeps the original line exactly.
+                     */
+                    const double makecorrelated = Optimizer::mbLiveBAAutotune ? 0.0 : Optimizer::msVanillaConfig.correlationcoeff_uLuR;
+                    if(makecorrelated == 0.0)
+                    {
+                        Eigen::Matrix3d Info = Eigen::Matrix3d::Identity()*invSigma2;
+                        e->setInformation(Info);
+                    }
+                    else
+                    {
+                        Eigen::Matrix3d Cov = Eigen::Matrix3d::Identity() / static_cast<double>(invSigma2);
+                        Cov(0, 2) = Cov(2, 0) = makecorrelated / static_cast<double>(invSigma2);
+                        e->setInformation(Cov.inverse());
+                    }
 
                     g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
                     e->setRobustKernel(rk);
@@ -2562,18 +2576,15 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
 
     g2o::BlockSolverX * solver_ptr = new g2o::BlockSolverX(linearSolver);
 
+    /**
+     * Patched By Hesam: one solver pointer, so the stop threshold can be set before the optimization (same lambdas as before)
+     */
+    g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
     if(bLarge)
-    {
-        g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
         solver->setUserLambdaInit(1e-2); // to avoid iterating for finding optimal lambda
-        optimizer.setAlgorithm(solver);
-    }
     else
-    {
-        g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
         solver->setUserLambdaInit(1e0);
-        optimizer.setAlgorithm(solver);
-    }
+    optimizer.setAlgorithm(solver);
 
 
     // Set Local temporal KeyFrame vertices
@@ -2731,6 +2742,14 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
     vector<EdgeStereo*> vpEdgesStereo;
     vpEdgesStereo.reserve(nExpectedSize);
 
+    /**
+     * Patched By Hesam: octave of every visual edge, for the autotune groups
+     */
+    vector<int> vnOctaveMono;
+    vnOctaveMono.reserve(nExpectedSize);
+    vector<int> vnOctaveStereo;
+    vnOctaveStereo.reserve(nExpectedSize);
+
     vector<KeyFrame*> vpEdgeKFStereo;
     vpEdgeKFStereo.reserve(nExpectedSize);
 
@@ -2810,6 +2829,7 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
 
                     optimizer.addEdge(e);
                     vpEdgesMono.push_back(e);
+                    vnOctaveMono.push_back(kpUn.octave);   // Patched By Hesam
                     vpEdgeKFMono.push_back(pKFi);
                     vpMapPointEdgeMono.push_back(pMP);
                 }
@@ -2841,6 +2861,7 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
 
                     optimizer.addEdge(e);
                     vpEdgesStereo.push_back(e);
+                    vnOctaveStereo.push_back(kpUn.octave);   // Patched By Hesam
                     vpEdgeKFStereo.push_back(pKFi);
                     vpMapPointEdgeStereo.push_back(pMP);
                 }
@@ -2875,6 +2896,7 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
 
                         optimizer.addEdge(e);
                         vpEdgesMono.push_back(e);
+                        vnOctaveMono.push_back(kp.octave);   // Patched By Hesam
                         vpEdgeKFMono.push_back(pKFi);
                         vpMapPointEdgeMono.push_back(pMP);
                     }
@@ -2892,7 +2914,23 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
     optimizer.initializeOptimization();
     optimizer.computeActiveErrors();
     float err = optimizer.activeRobustChi2();
-    optimizer.optimize(opt_it); // Originally to 2
+    /**
+     * Patched By Hesam
+     */
+    if(Optimizer::mbLiveBAAutotune)
+    {   // only the visual edges are grouped and tuned; the inertial edges are in no group (allow_unregistered_edges) and keep their information
+        std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end());
+        std::vector<g2o::OptimizableGraph::Edge*> vpEdgesStereoGeneric(vpEdgesStereo.begin(), vpEdgesStereo.end());
+        solver->setStopCriteriaThreshold(Optimizer::msLiveBAConfig.stop_criteria_threshold);
+        // no stop flag: like the original, Tracking cannot abort a local inertial BA (its flag is only set after the optimization)
+        RunLiveOctaveAutotune(optimizer, vpEdgesMonoGeneric, vnOctaveMono, vpEdgesStereoGeneric, vnOctaveStereo,
+                              Optimizer::msLiveBAConfig, nullptr);
+    }
+    else
+    {
+        solver->setStopCriteriaThreshold(Optimizer::msVanillaConfig.stop_criteria_threshold);
+        optimizer.optimize(opt_it); // Originally to 2
+    }
     float err_end = optimizer.activeRobustChi2();
     if(pbStopFlag)
         optimizer.setForceStopFlag(pbStopFlag);
@@ -2940,7 +2978,7 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
 
 
     // TODO: Some convergence problems have been detected here
-    if((2*err < err_end || isnan(err) || isnan(err_end)) && !bLarge) //bGN)
+    if(((!Optimizer::mbLiveBAAutotune && 2*err < err_end) || isnan(err) || isnan(err_end)) && !bLarge) //bGN)
     {
         cout << "FAIL LOCAL-INERTIAL BA!!!!" << endl;
         return;
