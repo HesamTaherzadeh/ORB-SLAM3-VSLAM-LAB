@@ -1385,7 +1385,11 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
                     else
                     {
                         Eigen::Matrix3d Cov = Eigen::Matrix3d::Identity() / static_cast<double>(invSigma2);
-                        Cov(0, 2) = Cov(2, 0) = makecorrelated / static_cast<double>(invSigma2);
+                        Cov(2,2) *= 2.0;
+                        Cov(0,2) = makecorrelated * sqrt(Cov(0,0) * Cov(2,2));
+                        Cov(2,0) = Cov(0,2);
+                        // Cov(0, 2) = Cov(2, 0) = makecorrelated / static_cast<double>(invSigma2);
+
                         e->setInformation(Cov.inverse());
                     }
 
