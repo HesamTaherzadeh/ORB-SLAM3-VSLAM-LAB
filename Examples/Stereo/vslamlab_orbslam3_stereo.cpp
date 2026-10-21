@@ -40,6 +40,7 @@ void removeSubstring(std::string& str, const std::string& substring) {
     }
 }
 
+
 int main(int argc, char **argv)
 {
 
@@ -143,7 +144,15 @@ int main(int argc, char **argv)
      * Patched By Hesam
      */
     google::InitGoogleLogging(argv[0]);
-    FLAGS_logtostderr = 1;
+    FLAGS_logtostderr = 0;                       
+    FLAGS_alsologtostderr = 1;                    
+    FLAGS_timestamp_in_logfile_name = false;      
+    const std::string glogPrefix = exp_folder + "/" + paddingZeros(exp_id) + "_glog_";
+    for (const auto& [severity, name] : {std::pair{google::GLOG_INFO, "INFO"}, std::pair{google::GLOG_WARNING, "WARNING"},
+                                         std::pair{google::GLOG_ERROR, "ERROR"}, std::pair{google::GLOG_FATAL, "FATAL"}}) {
+        google::SetLogDestination(severity, (glogPrefix + name + ".txt").c_str());   
+        google::SetLogSymlink(severity, "");                                        
+    }
 
     ORB_SLAM3::System::mbLoopClosingEnabled = loop_closing;
 
@@ -236,6 +245,8 @@ int main(int argc, char **argv)
      */
     if (ORB_SLAM3::Optimizer::mbLiveBAAutotune) {
         ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_autotune.json");
+    } else {
+        ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_vanilla.json");   // chi2 / outliers per BA
     }
 
     // Tracking time statistics

@@ -6,8 +6,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <map>
+#include <sstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -329,6 +332,50 @@ void RunLiveOctaveAutotune(
                                     {"flags", group.clamp_flags}});
     }
     record["time_s"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
+void RunVanillaWithStats(
+    g2o::SparseOptimizer& optimizer,
+    const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesMono,
+    const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesStereo,
+    int iterations,
+    bool* pbStopFlag)
+{
+    const auto start = std::chrono::steady_clock::now();
+    const double huberDeltaMono = std::sqrt(5.991), huberDeltaStereo = std::sqrt(7.815);   // ORB's erase test after the local BA
+    g_autotuneBAs.push_back({{"ba", g_autotuneBAs.size()}, {"chi2", nlohmann::json::array()},
+                             {"groups", nlohmann::json::array()}, {"optimizations", nlohmann::json::array()}});
+    auto& record = g_autotuneBAs.back();
+
+    optimizer.initializeOptimization();
+    optimizer.computeActiveErrors();
+    RecordChi2ByType("initial", vpEdgesMono, vpEdgesStereo, huberDeltaMono, huberDeltaStereo);
+
+    const int done = optimizer.optimize(iterations);
+    const bool optimizationStop = pbStopFlag && *pbStopFlag;
+    record["optimizations"].push_back({{"stage", "vanilla"}, {"requested", iterations}, {"iterations", done},
+                                       {"reached_stop_criterion", done > 0 && done < iterations && !optimizationStop},
+                                       {"tracking_stop_flag", optimizationStop}});
+
+    optimizer.computeActiveErrors();
+    RecordChi2ByType("final", vpEdgesMono, vpEdgesStereo, huberDeltaMono, huberDeltaStereo);
+    record["time_s"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+
+    std::ostringstream line;   // e.g. [VANILLA BA] ba=12 iterations=7/10 stop_flag=0 | mono edges=230 outliers 3.1% -> 2.2% | stereo ...
+    line << "[VANILLA BA] ba=" << record["ba"] << " iterations=" << done << "/" << iterations << " stop_flag=" << optimizationStop;
+    for(const char* type : {"mono", "stereo"})
+    {
+        nlohmann::json before, after;
+        for(const auto& chi2 : record["chi2"])
+            if(chi2["type"] == type)
+                (chi2["stage"] == "initial" ? before : after) = chi2;
+        if(before.is_null())
+            continue;
+        line << std::fixed << std::setprecision(2) << " | " << type << " edges=" << before["edges"]
+             << " outliers " << 100.0 * before["frac_above_huber"].get<double>() << "% -> "
+             << 100.0 * after["frac_above_huber"].get<double>() << "%";
+    }
+    LOG(INFO) << line.str();
 }
 
 void SaveAutotuneStats(const std::string& path)

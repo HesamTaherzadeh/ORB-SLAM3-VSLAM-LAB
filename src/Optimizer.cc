@@ -1485,8 +1485,12 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
             for(auto* e : vpEdgesStereo)
                 e->setInformation(Eigen::Matrix3d::Identity());
         }
-        optimizer.initializeOptimization();
-        optimizer.optimize(Optimizer::msVanillaConfig.num_iterations);
+        // test/testVanillaOutlierPercentage: same optimize() as before, plus the chi2 / outlier record of every BA
+        std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end());
+        vpEdgesMonoGeneric.insert(vpEdgesMonoGeneric.end(), vpEdgesBody.begin(), vpEdgesBody.end());   // 2-D, erased at 5.991 too
+        std::vector<g2o::OptimizableGraph::Edge*> vpEdgesStereoGeneric(vpEdgesStereo.begin(), vpEdgesStereo.end());
+        RunVanillaWithStats(optimizer, vpEdgesMonoGeneric, vpEdgesStereoGeneric,
+                            Optimizer::msVanillaConfig.num_iterations, pbStopFlag);
     }
 
     vector<pair<KeyFrame*,MapPoint*> > vToErase;

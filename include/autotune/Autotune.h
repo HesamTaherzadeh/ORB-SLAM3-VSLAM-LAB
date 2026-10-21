@@ -41,6 +41,15 @@ void RunLiveOctaveAutotune(
     const cov_auto_tune::AutotunerConfig& config = cov_auto_tune::AutotunerConfig(),
     bool* pbStopFlag = nullptr);
 
+// vanilla local BA with the same per-BA record as the autotune one (chi2 initial / final, the optimize() call, no groups),
+// frac_above_huber against ORB's erase thresholds (5.991 mono, 7.815 stereo); one [VANILLA BA] glog line per BA
+void RunVanillaWithStats(
+    g2o::SparseOptimizer& optimizer,
+    const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesMono,
+    const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesStereo,
+    int iterations,
+    bool* pbStopFlag = nullptr);
+
 } // namespace ORB_SLAM3
 
 #endif // ORB_SLAM3_AUTOTUNE_H
