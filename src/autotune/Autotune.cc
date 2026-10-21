@@ -69,13 +69,15 @@ VanillaConfig LoadVanillaConfig(const std::string& path)
     ReadIfPresent(node, "stop_criteria_threshold", config.stop_criteria_threshold);
     ReadIfPresent(node, "num_iterations", config.num_iterations);
     ReadIfPresent(node, "correlationcoeff_uLuR", config.correlationcoeff_uLuR);
+    ReadIfPresent(node, "identity_information", config.identity_information);
     if(config.correlationcoeff_uLuR <= -1.0 || config.correlationcoeff_uLuR >= 1.0)
         throw std::runtime_error("LoadVanillaConfig: correlationcoeff_uLuR must be in (-1, 1)");
 
     LOG(INFO) << "[VANILLA CONFIG] loaded from " << path;
     LOG(INFO) << "[VANILLA CONFIG] stop_criteria_threshold=" << config.stop_criteria_threshold
               << " num_iterations=" << config.num_iterations
-              << " correlationcoeff_uLuR=" << config.correlationcoeff_uLuR;
+              << " correlationcoeff_uLuR=" << config.correlationcoeff_uLuR
+              << " identity_information=" << config.identity_information;
 
     return config;
 }
@@ -186,18 +188,21 @@ EdgeGroups GroupByOctaveBand(
     const std::vector<std::vector<int>>& octaveBands)
 {
     EdgeGroups groups;
-    // for(size_t i = 0; i < vpEdgesMono.size(); ++i)
-    //     groups.mono[OctaveBandIndex(vnOctaveMono[i], octaveBands)].push_back(vpEdgesMono[i]);
-    // for(size_t i = 0; i < vpEdgesStereo.size(); ++i)
-    //     groups.stereo[OctaveBandIndex(vnOctaveStereo[i], octaveBands)].push_back(vpEdgesStereo[i]);
+    // batch16: one group per octave band of solver.octave_bands (one band with octaves 0-7 = one mono and one stereo group).
+    // The default bands {0}, ..., {7} give one group per octave, as the per-octave grouping below did.
+    for(size_t i = 0; i < vpEdgesMono.size(); ++i)
+        groups.mono[OctaveBandIndex(vnOctaveMono[i], octaveBands)].push_back(vpEdgesMono[i]);
+    for(size_t i = 0; i < vpEdgesStereo.size(); ++i)
+        groups.stereo[OctaveBandIndex(vnOctaveStereo[i], octaveBands)].push_back(vpEdgesStereo[i]);
 
     // groups.mono = GroupByDepthQuantile(vpEdgesMono, octaveBands.size());
     // groups.stereo = GroupByDepthQuantile(vpEdgesStereo, octaveBands.size());
 
-    for(size_t i = 0; i < vpEdgesMono.size(); ++i)
-        groups.mono[vnOctaveMono[i]].push_back(vpEdgesMono[i]);
-    for(size_t i = 0; i < vpEdgesStereo.size(); ++i)
-        groups.stereo[vnOctaveStereo[i]].push_back(vpEdgesStereo[i]);
+    // Per-octave grouping (batches 7-15), replaced by the octave bands above:
+    // for(size_t i = 0; i < vpEdgesMono.size(); ++i)
+    //     groups.mono[vnOctaveMono[i]].push_back(vpEdgesMono[i]);
+    // for(size_t i = 0; i < vpEdgesStereo.size(); ++i)
+    //     groups.stereo[vnOctaveStereo[i]].push_back(vpEdgesStereo[i]);
     return groups;
 }
 

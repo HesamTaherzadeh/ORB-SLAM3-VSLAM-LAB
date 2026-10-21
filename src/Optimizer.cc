@@ -1476,6 +1476,15 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
          * Patched By Hesam
          */
         solver->setStopCriteriaThreshold(Optimizer::msVanillaConfig.stop_criteria_threshold);
+        if(Optimizer::msVanillaConfig.identity_information)
+        {
+            for(auto* e : vpEdgesMono)
+                e->setInformation(Eigen::Matrix2d::Identity());
+            for(auto* e : vpEdgesBody)
+                e->setInformation(Eigen::Matrix2d::Identity());
+            for(auto* e : vpEdgesStereo)
+                e->setInformation(Eigen::Matrix3d::Identity());
+        }
         optimizer.initializeOptimization();
         optimizer.optimize(Optimizer::msVanillaConfig.num_iterations);
     }
