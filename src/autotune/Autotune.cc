@@ -38,7 +38,8 @@ namespace
 //  "chi2": [{stage (initial / final), type (mono / stereo), edges, mean_chi2, huber_delta, frac_above_huber}],
 //  "groups": [{group, edges, after the last tune():
 //              information (matrix written to the edges), cov_eigenvalues (of its inverse, ascending),
-//              cov_eigenvalues_before_clamp, flags (per eigenvalue: -1 min_eig_cov, 0 free, +1 max_eig_cov)}]}
+//              cov_eigenvalues_before_clamp, flags (per eigenvalue: -1 min_eig_cov, 0 free, +1 max_eig_cov)}],
+//  "erased": {mono, stereo (observations erased after the BA), chi2_mono, chi2_stereo (the erase thresholds used)}}
 nlohmann::json g_autotuneBAs = nlohmann::json::array();
 
 template<typename T>
@@ -376,6 +377,14 @@ void RunVanillaWithStats(
              << 100.0 * after["frac_above_huber"].get<double>() << "%";
     }
     LOG(INFO) << line.str();
+}
+
+void RecordErased(size_t erasedMono, size_t erasedStereo, double chi2EraseMono, double chi2EraseStereo)
+{
+    if(g_autotuneBAs.empty())
+        return;
+    g_autotuneBAs.back()["erased"] = {{"mono", erasedMono}, {"stereo", erasedStereo},
+                                      {"chi2_mono", chi2EraseMono}, {"chi2_stereo", chi2EraseStereo}};
 }
 
 void SaveAutotuneStats(const std::string& path)

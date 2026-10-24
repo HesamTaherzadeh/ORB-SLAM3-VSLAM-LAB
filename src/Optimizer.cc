@@ -1496,6 +1496,15 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     vector<pair<KeyFrame*,MapPoint*> > vToErase;
     vToErase.reserve(vpEdgesMono.size()+vpEdgesBody.size()+vpEdgesStereo.size());
 
+    /**
+     * Patched By Hesam (test/eraseFollowsHuber): erase at the Huber delta's chi2 when erase_at_huber_delta is set (autotune only),
+     * and count the erased observations per type for the per-BA record
+     */
+    const bool eraseAtHuber = Optimizer::mbLiveBAAutotune && Optimizer::msLiveBAConfig.erase_at_huber_delta;
+    const double chi2EraseMono = eraseAtHuber ? double(thHuberMono) * thHuberMono : 5.991;
+    const double chi2EraseStereo = eraseAtHuber ? double(thHuberStereo) * thHuberStereo : 7.815;
+    size_t nErasedMono = 0, nErasedStereo = 0;
+
     // Check inlier observations       
     for(size_t i=0, iend=vpEdgesMono.size(); i<iend;i++)
     {
@@ -1505,10 +1514,11 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         if(pMP->isBad())
             continue;
 
-        if(e->chi2()>5.991 || !e->isDepthPositive())
+        if(e->chi2()>chi2EraseMono || !e->isDepthPositive())
         {
             KeyFrame* pKFi = vpEdgeKFMono[i];
             vToErase.push_back(make_pair(pKFi,pMP));
+            ++nErasedMono;
         }
     }
 
@@ -1520,10 +1530,11 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         if(pMP->isBad())
             continue;
 
-        if(e->chi2()>5.991 || !e->isDepthPositive())
+        if(e->chi2()>chi2EraseMono || !e->isDepthPositive())
         {
             KeyFrame* pKFi = vpEdgeKFBody[i];
             vToErase.push_back(make_pair(pKFi,pMP));
+            ++nErasedMono;
         }
     }
 
@@ -1535,12 +1546,14 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         if(pMP->isBad())
             continue;
 
-        if(e->chi2()>7.815 || !e->isDepthPositive())
+        if(e->chi2()>chi2EraseStereo || !e->isDepthPositive())
         {
             KeyFrame* pKFi = vpEdgeKFStereo[i];
             vToErase.push_back(make_pair(pKFi,pMP));
+            ++nErasedStereo;
         }
     }
+    RecordErased(nErasedMono, nErasedStereo, chi2EraseMono, chi2EraseStereo);   // into this BA's autotune / vanilla record
 
 
     // Get Map Mutex

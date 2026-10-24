@@ -41,6 +41,9 @@ void RunLiveOctaveAutotune(
     const cov_auto_tune::AutotunerConfig& config = cov_auto_tune::AutotunerConfig(),
     bool* pbStopFlag = nullptr);
 
+// observations the local BA erased after optimizing (chi2 over the erase threshold or negative depth), into the current BA's record
+void RecordErased(size_t erasedMono, size_t erasedStereo, double chi2EraseMono, double chi2EraseStereo);
+
 // vanilla local BA with the same per-BA record as the autotune one (chi2 initial / final, the optimize() call, no groups),
 // frac_above_huber against ORB's erase thresholds (5.991 mono, 7.815 stereo); one [VANILLA BA] glog line per BA
 void RunVanillaWithStats(
