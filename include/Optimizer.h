@@ -38,9 +38,6 @@
 #include "Thirdparty/g2o/g2o/core/robust_kernel_impl.h"
 #include "Thirdparty/g2o/g2o/solvers/linear_solver_dense.h"
 
-/**
- * Patched By Hesam
- */
 #include "autotune/Autotune.h"
 
 namespace ORB_SLAM3
@@ -52,9 +49,6 @@ class Optimizer
 {
 public:
 
-    /**
-     * Patched By Hesam 
-     */
     static bool mbLiveBAAutotune;
     static cov_auto_tune::AutotunerConfig msLiveBAConfig;
     static VanillaConfig msVanillaConfig;

@@ -8,9 +8,6 @@
 #include "sys/sysinfo.h"
 
 #include<System.h>
-/**
- * Patched By Hesam
- */
 #include "Optimizer.h"
 #include "autotune/Autotune.h"
 #include "cov_auto_tune/config_yaml.h"
@@ -52,9 +49,6 @@ int main(int argc, char **argv)
     string exp_id{"0"};
     string settings_yaml{"orbslam2_settings.yaml"};
     bool verbose{true};
-    /**
-     * Patched By Hesam
-     */
     string autotune_config{"-"};
     string vanilla_config{"-"};
     bool loop_closing{true};
@@ -111,9 +105,6 @@ int main(int argc, char **argv)
             LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to vocabulary = " << vocabulary;
             continue;
         }
-        /**
-         * Patched By Hesam
-         */
         if (arg.find("autotune_config:") != std::string::npos) {
             removeSubstring(arg, "autotune_config:");
             autotune_config = arg;
@@ -140,9 +131,6 @@ int main(int argc, char **argv)
         }
     }
 
-    /**
-     * Patched By Hesam
-     */
     google::InitGoogleLogging(argv[0]);
     FLAGS_logtostderr = 0;                       
     FLAGS_alsologtostderr = 1;                    
@@ -240,13 +228,10 @@ int main(int argc, char **argv)
     // Stop all threads
     SLAM.Shutdown();
 
-    /**
-     * Patched By Hesam
-     */
     if (ORB_SLAM3::Optimizer::mbLiveBAAutotune) {
         ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_autotune.json");
     } else {
-        ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_vanilla.json");   // chi2 / outliers per BA
+        ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_vanilla.json");
     }
 
     // Tracking time statistics

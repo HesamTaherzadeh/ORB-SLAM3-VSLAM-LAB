@@ -1,7 +1,3 @@
-/**
- * Patched By Hesam
- */
-
 #include "autotune/Autotune.h"
 
 #include <algorithm>
@@ -52,9 +48,6 @@ void ReadIfPresent(const cv::FileNode& node, const std::string& name, T& value)
 
 } // namespace
 
-/**
- * Patched By Hesam
- */
 VanillaConfig LoadVanillaConfig(const std::string& path)
 {
     if(!std::ifstream(path).good())
@@ -152,7 +145,7 @@ void RegisterGroups(
         ++groupIndex;
     }
 
-    if(groupIndex == 0)
+    if(groupIndex == 0 && !groups.empty())
         LOG(ERROR) << "[AUTOTUNE] RegisterGroups registered nothing for dimension " << dimension
                    << " -- " << groups.size() << " octave bucket(s), all with zero edges";
 }
@@ -343,7 +336,7 @@ void RunVanillaWithStats(
     bool* pbStopFlag)
 {
     const auto start = std::chrono::steady_clock::now();
-    const double huberDeltaMono = std::sqrt(5.991), huberDeltaStereo = std::sqrt(7.815);   // ORB's erase test after the local BA
+    const double huberDeltaMono = std::sqrt(5.991), huberDeltaStereo = std::sqrt(7.815);
     g_autotuneBAs.push_back({{"ba", g_autotuneBAs.size()}, {"chi2", nlohmann::json::array()},
                              {"groups", nlohmann::json::array()}, {"optimizations", nlohmann::json::array()}});
     auto& record = g_autotuneBAs.back();
@@ -362,7 +355,7 @@ void RunVanillaWithStats(
     RecordChi2ByType("final", vpEdgesMono, vpEdgesStereo, huberDeltaMono, huberDeltaStereo);
     record["time_s"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
-    std::ostringstream line;   // e.g. [VANILLA BA] ba=12 iterations=7/10 stop_flag=0 | mono edges=230 outliers 3.1% -> 2.2% | stereo ...
+    std::ostringstream line;
     line << "[VANILLA BA] ba=" << record["ba"] << " iterations=" << done << "/" << iterations << " stop_flag=" << optimizationStop;
     for(const char* type : {"mono", "stereo"})
     {

@@ -41,9 +41,6 @@
 
 #include "OptimizableTypes.h"
 
-/**
- * Patched By Hesam
- */
 #include "autotune/Autotune.h"
 
 
@@ -54,9 +51,6 @@ bool sortByVal(const pair<MapPoint*, int> &a, const pair<MapPoint*, int> &b)
     return (a.second < b.second);
 }
 
-/**
- * Patched By Hesam
- */
 bool Optimizer::mbLiveBAAutotune = false;
 cov_auto_tune::AutotunerConfig Optimizer::msLiveBAConfig = cov_auto_tune::AutotunerConfig();
 VanillaConfig Optimizer::msVanillaConfig = VanillaConfig();
@@ -1210,9 +1204,6 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         solver->setUserLambdaInit(100.0);
 
     optimizer.setAlgorithm(solver);
-    /**
-     * Patched By Hesam
-     */
     optimizer.setVerbose(Optimizer::mbLiveBAAutotune && Optimizer::msLiveBAConfig.verbose);
 
     if(pbStopFlag)
@@ -1263,9 +1254,6 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     vector<ORB_SLAM3::EdgeSE3ProjectXYZ*> vpEdgesMono;
     vpEdgesMono.reserve(nExpectedSize);
 
-    /**
-     * Patched By Hesam
-     */
     vector<int> vnOctaveMono;
     vnOctaveMono.reserve(nExpectedSize);
     vector<int> vnOctaveStereo;
@@ -1295,15 +1283,13 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     vector<MapPoint*> vpMapPointEdgeStereo;
     vpMapPointEdgeStereo.reserve(nExpectedSize);
 
-    /**
-     * Patched By Hesam
-     */
     const float thHuberMono = Optimizer::msLiveBAConfig.huber_delta_mono;
     const float thHuberStereo = Optimizer::msLiveBAConfig.huber_delta_stereo;
 
     int nPoints = 0;
 
     int nEdges = 0;
+    const bool removeMono = Optimizer::mbLiveBAAutotune && Optimizer::msLiveBAConfig.remove_mono;
 
     for(list<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++)
     {
@@ -1328,7 +1314,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
                 const int leftIndex = get<0>(mit->second);
 
                 // Monocular observation
-                if(leftIndex != -1 && pKFi->mvuRight[get<0>(mit->second)]<0)
+                if(!removeMono && leftIndex != -1 && pKFi->mvuRight[get<0>(mit->second)]<0)
                 {
                     const cv::KeyPoint &kpUn = pKFi->mvKeysUn[leftIndex];
                     Eigen::Matrix<double,2,1> obs;
@@ -1350,9 +1336,6 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
 
                     optimizer.addEdge(e);
                     vpEdgesMono.push_back(e);
-                    /**
-                    * Patched By Hesam
-                    */
                     vnOctaveMono.push_back(kpUn.octave);
                     vpEdgeKFMono.push_back(pKFi);
                     vpMapPointEdgeMono.push_back(pMP);
@@ -1372,10 +1355,6 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
                     e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKFi->mnId)));
                     e->setMeasurement(obs);
                     const float &invSigma2 = pKFi->mvInvLevelSigma2[kpUn.octave];
-                    /**
-                     * Patched By Hesam: vanilla only, optional correlation of uL and uR, set on the covariance and then inverted.
-                     * Cov = sigma^2 [[1,0,rho],[0,1,0],[rho,0,1]], Info = Cov^-1. rho = 0 keeps the original line exactly.
-                     */
                     const double makecorrelated = Optimizer::mbLiveBAAutotune ? 0.0 : Optimizer::msVanillaConfig.correlationcoeff_uLuR;
                     if(makecorrelated == 0.0)
                     {
@@ -1405,9 +1384,6 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
 
                     optimizer.addEdge(e);
                     vpEdgesStereo.push_back(e);
-                    /**
-                     * Patched By Hesam
-                     */
                     vnOctaveStereo.push_back(kpUn.octave);
                     vpEdgeKFStereo.push_back(pKFi);
                     vpMapPointEdgeStereo.push_back(pMP);
@@ -1415,7 +1391,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
                     nEdges++;
                 }
 
-                if(pKFi->mpCamera2){
+                if(!removeMono && pKFi->mpCamera2){
                     int rightIndex = get<1>(mit->second);
 
                     if(rightIndex != -1 ){
@@ -1459,9 +1435,6 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         if(*pbStopFlag)
             return;
 
-    /**
-     * Patched By Hesam
-     */
     if(Optimizer::mbLiveBAAutotune)
     {   //edges and vector of their octaves.
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end()); //C++ members are invariant not covariant 
@@ -1472,9 +1445,6 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     }
     else
     {
-        /**
-         * Patched By Hesam
-         */
         solver->setStopCriteriaThreshold(Optimizer::msVanillaConfig.stop_criteria_threshold);
         if(Optimizer::msVanillaConfig.identity_information)
         {
@@ -1485,9 +1455,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
             for(auto* e : vpEdgesStereo)
                 e->setInformation(Eigen::Matrix3d::Identity());
         }
-        // test/testVanillaOutlierPercentage: same optimize() as before, plus the chi2 / outlier record of every BA
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end());
-        vpEdgesMonoGeneric.insert(vpEdgesMonoGeneric.end(), vpEdgesBody.begin(), vpEdgesBody.end());   // 2-D, erased at 5.991 too
+        vpEdgesMonoGeneric.insert(vpEdgesMonoGeneric.end(), vpEdgesBody.begin(), vpEdgesBody.end());
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesStereoGeneric(vpEdgesStereo.begin(), vpEdgesStereo.end());
         RunVanillaWithStats(optimizer, vpEdgesMonoGeneric, vpEdgesStereoGeneric,
                             Optimizer::msVanillaConfig.num_iterations, pbStopFlag);
@@ -1496,10 +1465,6 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     vector<pair<KeyFrame*,MapPoint*> > vToErase;
     vToErase.reserve(vpEdgesMono.size()+vpEdgesBody.size()+vpEdgesStereo.size());
 
-    /**
-     * Patched By Hesam (test/eraseFollowsHuber): erase at the Huber delta's chi2 when erase_at_huber_delta is set (autotune only),
-     * and count the erased observations per type for the per-BA record
-     */
     const bool eraseAtHuber = Optimizer::mbLiveBAAutotune && Optimizer::msLiveBAConfig.erase_at_huber_delta;
     const double chi2EraseMono = eraseAtHuber ? double(thHuberMono) * thHuberMono : 5.991;
     const double chi2EraseStereo = eraseAtHuber ? double(thHuberStereo) * thHuberStereo : 7.815;
@@ -1553,7 +1518,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
             ++nErasedStereo;
         }
     }
-    RecordErased(nErasedMono, nErasedStereo, chi2EraseMono, chi2EraseStereo);   // into this BA's autotune / vanilla record
+    RecordErased(nErasedMono, nErasedStereo, chi2EraseMono, chi2EraseStereo);
 
 
     // Get Map Mutex
@@ -2606,9 +2571,6 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
 
     g2o::BlockSolverX * solver_ptr = new g2o::BlockSolverX(linearSolver);
 
-    /**
-     * Patched By Hesam: one solver pointer, so the stop threshold can be set before the optimization (same lambdas as before)
-     */
     g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
     if(bLarge)
         solver->setUserLambdaInit(1e-2); // to avoid iterating for finding optimal lambda
@@ -2772,9 +2734,6 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
     vector<EdgeStereo*> vpEdgesStereo;
     vpEdgesStereo.reserve(nExpectedSize);
 
-    /**
-     * Patched By Hesam: octave of every visual edge, for the autotune groups
-     */
     vector<int> vnOctaveMono;
     vnOctaveMono.reserve(nExpectedSize);
     vector<int> vnOctaveStereo;
@@ -2859,7 +2818,7 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
 
                     optimizer.addEdge(e);
                     vpEdgesMono.push_back(e);
-                    vnOctaveMono.push_back(kpUn.octave);   // Patched By Hesam
+                    vnOctaveMono.push_back(kpUn.octave);
                     vpEdgeKFMono.push_back(pKFi);
                     vpMapPointEdgeMono.push_back(pMP);
                 }
@@ -2891,7 +2850,7 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
 
                     optimizer.addEdge(e);
                     vpEdgesStereo.push_back(e);
-                    vnOctaveStereo.push_back(kpUn.octave);   // Patched By Hesam
+                    vnOctaveStereo.push_back(kpUn.octave);
                     vpEdgeKFStereo.push_back(pKFi);
                     vpMapPointEdgeStereo.push_back(pMP);
                 }
@@ -2926,7 +2885,7 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
 
                         optimizer.addEdge(e);
                         vpEdgesMono.push_back(e);
-                        vnOctaveMono.push_back(kp.octave);   // Patched By Hesam
+                        vnOctaveMono.push_back(kp.octave);
                         vpEdgeKFMono.push_back(pKFi);
                         vpMapPointEdgeMono.push_back(pMP);
                     }
@@ -2944,9 +2903,6 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
     optimizer.initializeOptimization();
     optimizer.computeActiveErrors();
     float err = optimizer.activeRobustChi2();
-    /**
-     * Patched By Hesam
-     */
     if(Optimizer::mbLiveBAAutotune)
     {   // only the visual edges are grouped and tuned; the inertial edges are in no group (allow_unregistered_edges) and keep their information
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end());
