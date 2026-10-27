@@ -19,6 +19,8 @@
 #include <map>
 #include <stdexcept>
 
+// #define PRINT_CONFIG_ONLY  
+
 using namespace std;
 namespace ORB_SLAM3{
     using Seconds = double;
@@ -156,6 +158,9 @@ int main(int argc, char **argv)
         ORB_SLAM3::Optimizer::mbLiveBAAutotune = true;
         try {
             ORB_SLAM3::Optimizer::msLiveBAConfig = cov_auto_tune::configFromYamlFile(autotune_config);
+            std::cout << "[AUTOTUNE CONFIG] loaded from " << autotune_config;
+            ORB_SLAM3::Optimizer::msLiveBAConfig.print(std::cout);
+            std::cout << std::flush;
         } catch (const std::exception& e) {
             LOG(FATAL) << "Failed to load autotune config '" << autotune_config << "': " << e.what();
         }
@@ -166,6 +171,9 @@ int main(int argc, char **argv)
             LOG(FATAL) << "Failed to load vanilla config '" << vanilla_config << "': " << e.what();
         }
     }
+#ifdef PRINT_CONFIG_ONLY
+    return 1;
+#endif
 
     // Retrieve paths to images
     vector<string> imageFilenames_l{}, imageFilenames_r{};
