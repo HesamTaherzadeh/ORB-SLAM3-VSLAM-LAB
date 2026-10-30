@@ -37,6 +37,8 @@ namespace
 //              cov_eigenvalues_before_clamp, flags (per eigenvalue: -1 min_eig_cov, 0 free, +1 max_eig_cov)}],
 //  "erased": {mono, stereo (observations erased after the BA), chi2_mono, chi2_stereo (the erase thresholds used)}}
 nlohmann::json g_autotuneBAs = nlohmann::json::array();
+std::map<std::string, Eigen::MatrixXd> map_of_label_to_covariance;  
+bool first_ba_ {true};
 
 template<typename T>
 void ReadIfPresent(const cv::FileNode& node, const std::string& name, T& value)
@@ -127,12 +129,23 @@ void RegisterGroups(
             meanInformation = meanCovariance.inverse();
         }
 
-        cov_auto_tune::g2o::Group& group = tunerGroups[
-            "residuals_dim_" + std::to_string(dimension) + "_octave_" + std::to_string(octave)];
+        std::string label = "residuals_dim_" + std::to_string(dimension) + "_octave_" + std::to_string(octave); 
+        cov_auto_tune::g2o::Group& group = tunerGroups[label];
+
+
         cov_auto_tune::core::GroupCovarianceConfig& groupConfig = group.config;
         groupConfig.min_eig_cov = config.default_group_covariance.min_eig_cov;
         groupConfig.max_eig_cov = config.default_group_covariance.max_eig_cov;
-        groupConfig.prior_covariance_matrix = meanCovariance;
+        
+        auto it = map_of_label_to_covariance.find(label);
+        if (config.use_last_covariance_as_prior && it != map_of_label_to_covariance.end()){
+            groupConfig.prior_covariance_matrix = it->second;
+        }else{
+            groupConfig.prior_covariance_matrix = meanCovariance;
+        }
+        LOG(INFO) << "[Autotune.cc]prior " << label << " from=" << (it != map_of_label_to_covariance.end() ? "map" : "mean")
+                  << " rows=" << groupConfig.prior_covariance_matrix.rows() << " edges=" << groupEdges.size();
+
         groupConfig.prior_strength = config.prior_strength;
 
         group.edges = groupEdges;
@@ -144,6 +157,8 @@ void RegisterGroups(
         }
         ++groupIndex;
     }
+    first_ba_ = false;
+
 
     if(groupIndex == 0 && !groups.empty())
         LOG(ERROR) << "[AUTOTUNE] RegisterGroups registered nothing for dimension " << dimension
@@ -280,8 +295,10 @@ void RunLiveOctaveAutotune(
     optimizer.computeActiveErrors();
     RecordChi2ByType("initial", vpEdgesMono, vpEdgesStereo, config.huber_delta_mono, config.huber_delta_stereo);
 
+    LOG(INFO) << "[Autotune.cc]BA start stop=" << (pbStopFlag && *pbStopFlag);
     if(config.pre_iterations > 0 && !(pbStopFlag && *pbStopFlag))
         optimize("pre", config.pre_iterations);
+    LOG(INFO) << "[Autotune.cc]after pre stop=" << (pbStopFlag && *pbStopFlag);
 
     for(int outer = 0; outer < config.outer_iterations && !(pbStopFlag && *pbStopFlag); ++outer)
     {
@@ -310,7 +327,13 @@ void RunLiveOctaveAutotune(
                 row.push_back(group.information(r, c));
             information.push_back(row);
         }
-        // the covariance eigenvalues the last tune() used (ascending): its eigenvalues before the clamp, the flagged ones on their bound
+        // string label = "residuals_dim_" + std::to_string(dimension) + "_octave_" + std::to_string(octave);
+
+        LOG(INFO) << "[Autotune.cc]save " << label << " info_rows=" << group.information.rows() << " stop=" << (pbStopFlag && *pbStopFlag);
+
+        if(group.information.size() > 0)
+            map_of_label_to_covariance[label] = group.information.inverse();
+
         nlohmann::json covEigenvalues = nlohmann::json::array();
         for(size_t i = 0; i < group.covariance_before_clamp.size(); ++i)
         {
