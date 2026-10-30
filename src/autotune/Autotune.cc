@@ -69,6 +69,7 @@ VanillaConfig LoadVanillaConfig(const std::string& path)
     ReadIfPresent(node, "num_iterations", config.num_iterations);
     ReadIfPresent(node, "correlationcoeff_uLuR", config.correlationcoeff_uLuR);
     ReadIfPresent(node, "identity_information", config.identity_information);
+    ReadIfPresent(node, "remove_mono", config.remove_mono);
     if(config.correlationcoeff_uLuR <= -1.0 || config.correlationcoeff_uLuR >= 1.0)
         throw std::runtime_error("LoadVanillaConfig: correlationcoeff_uLuR must be in (-1, 1)");
 
@@ -76,7 +77,8 @@ VanillaConfig LoadVanillaConfig(const std::string& path)
     LOG(INFO) << "[VANILLA CONFIG] stop_criteria_threshold=" << config.stop_criteria_threshold
               << " num_iterations=" << config.num_iterations
               << " correlationcoeff_uLuR=" << config.correlationcoeff_uLuR
-              << " identity_information=" << config.identity_information;
+              << " identity_information=" << config.identity_information
+              << " remove_mono=" << config.remove_mono;
 
     return config;
 }

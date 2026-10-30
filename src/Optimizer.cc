@@ -1289,7 +1289,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     int nPoints = 0;
 
     int nEdges = 0;
-    const bool removeMono = Optimizer::mbLiveBAAutotune && Optimizer::msLiveBAConfig.remove_mono;
+    const bool removeMono = Optimizer::mbLiveBAAutotune ? Optimizer::msLiveBAConfig.remove_mono
+                                                        : Optimizer::msVanillaConfig.remove_mono;
 
     for(list<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++)
     {
