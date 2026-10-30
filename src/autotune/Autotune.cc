@@ -1,6 +1,7 @@
 #include "autotune/Autotune.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -37,8 +38,24 @@ namespace
 //              cov_eigenvalues_before_clamp, flags (per eigenvalue: -1 min_eig_cov, 0 free, +1 max_eig_cov)}],
 //  "erased": {mono, stereo (observations erased after the BA), chi2_mono, chi2_stereo (the erase thresholds used)}}
 nlohmann::json g_autotuneBAs = nlohmann::json::array();
-std::map<std::string, Eigen::MatrixXd> map_of_label_to_covariance;  
+std::map<std::string, Eigen::MatrixXd> map_of_label_to_covariance;
 bool first_ba_ {true};
+
+// Secondary config, hardcoded for now: the prior covariance injected into every stereo octave band (residual axes
+// u, v, u_right), indexed by band. Taken from batch29_autotune_h95_last1_w0_eig1e6_play0p_delta0_sqrton (Wishart off,
+// so a pure sample covariance R/k) KITTI 09 run 00000, last BA (588), inverse of the stored information (no eigenvalue
+// clamped). Takes precedence over use_last_covariance_as_prior.
+constexpr bool kInjectStereoPriorCovariance = true;
+const std::array<Eigen::Matrix3d, 8> kInjectedStereoPriorCovariance = {
+    (Eigen::Matrix3d() << 0.008713405152, 0.003748729823, 0.007794741598, 0.003748729823, 0.009640600896, 0.004879426486, 0.007794741598, 0.004879426486, 0.01173341367).finished(),
+    (Eigen::Matrix3d() << 0.01112228325, 0.003640704009, 0.0129232423, 0.003640704009, 0.01450241891, -0.0002880079826, 0.0129232423, -0.0002880079826, 0.02536888737).finished(),
+    (Eigen::Matrix3d() << 0.01837760498, 0.008592434921, 0.007281234611, 0.008592434921, 0.01595242984, 0.006777757653, 0.007281234611, 0.006777757653, 0.02923417316).finished(),
+    (Eigen::Matrix3d() << 0.06912920365, -0.002556752881, 0.04798840737, -0.002556752881, 0.02845568835, -0.001577490159, 0.04798840737, -0.001577490159, 0.07539084503).finished(),
+    (Eigen::Matrix3d() << 0.09086695998, -0.01139356657, 0.060554398, -0.01139356657, 0.08212509385, -0.01049008661, 0.060554398, -0.01049008661, 0.1430352974).finished(),
+    (Eigen::Matrix3d() << 0.1715676129, -0.001394954688, 0.06538003172, -0.001394954688, 0.4262963225, -0.05185899515, 0.06538003172, -0.05185899515, 0.2722414489).finished(),
+    (Eigen::Matrix3d() << 0.3009356077, 0.0463162771, 0.3606512139, 0.0463162771, 0.2378125246, 0.03462259634, 0.3606512139, 0.03462259634, 0.537961019).finished(),
+    (Eigen::Matrix3d() << 0.198225918, -0.07301284754, 0.1884469019, -0.07301284754, 0.3783972497, -0.2377325684, 0.1884469019, -0.2377325684, 0.4322170313).finished(),
+};
 
 template<typename T>
 void ReadIfPresent(const cv::FileNode& node, const std::string& name, T& value)
@@ -138,12 +155,20 @@ void RegisterGroups(
         groupConfig.max_eig_cov = config.default_group_covariance.max_eig_cov;
         
         auto it = map_of_label_to_covariance.find(label);
-        if (config.use_last_covariance_as_prior && it != map_of_label_to_covariance.end()){
+        const bool injected = kInjectStereoPriorCovariance && dimension == 3 &&
+                              octave >= 0 && octave < static_cast<int>(kInjectedStereoPriorCovariance.size());
+        const char* prior_source;
+        if (injected){
+            groupConfig.prior_covariance_matrix = kInjectedStereoPriorCovariance[octave];
+            prior_source = "injected";
+        }else if (config.use_last_covariance_as_prior && it != map_of_label_to_covariance.end()){
             groupConfig.prior_covariance_matrix = it->second;
+            prior_source = "map";
         }else{
             groupConfig.prior_covariance_matrix = meanCovariance;
+            prior_source = "mean";
         }
-        LOG(INFO) << "[Autotune.cc]prior " << label << " from=" << (it != map_of_label_to_covariance.end() ? "map" : "mean")
+        LOG(INFO) << "[Autotune.cc]prior " << label << " from=" << prior_source
                   << " rows=" << groupConfig.prior_covariance_matrix.rows() << " edges=" << groupEdges.size();
 
         groupConfig.prior_strength = config.prior_strength;
