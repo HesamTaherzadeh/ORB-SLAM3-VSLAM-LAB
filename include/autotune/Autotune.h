@@ -18,6 +18,7 @@ struct VanillaConfig
     int num_iterations = 10;
     double correlationcoeff_uLuR = 0.0;   // correlation of uL and uR in the stereo covariance of the local BA (0 = original vanilla)
     int identity_information = 0;         // 1: every local-BA edge's information = I instead of ORB's octave weight (0 = original vanilla)
+    int remove_mono = 0;                  // 1: no mono / body (right-camera) edges in the local BA, same as autotune's remove_mono (0 = original vanilla)
 };
 
 VanillaConfig LoadVanillaConfig(const std::string& path);
