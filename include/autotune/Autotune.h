@@ -16,9 +16,14 @@ struct VanillaConfig
 {
     double stop_criteria_threshold = 1e-3;
     int num_iterations = 10;
-    double correlationcoeff_uLuR = 0.0;   // correlation of uL and uR in the stereo covariance of the local BA (0 = original vanilla)
-    int identity_information = 0;         // 1: every local-BA edge's information = I instead of ORB's octave weight (0 = original vanilla)
-    int remove_mono = 0;                  // 1: no mono / body (right-camera) edges in the local BA, same as autotune's remove_mono (0 = original vanilla)
+    int remove_mono = 0;  // remove or keep mono observations (both in full ba and local ba)
+    int disable_huber = 0;  // Disable or enable huber (only in the final ba robust = bRobust && !disableHuber)
+    bool fixed_cov_final_ba = false;  // fix only the one ba that is called in shutdown -- rest use orb model 
+    bool fixed_cov_every_ba = false;  // fix for everything -- excluding pnp pose only
+    bool fixed_cov_every_full_ba = false;  // fix for all of the full ba (needs fixed_cov_final_ba)
+    bool fixed_cov_pose_optimization = false;  // fixes pnp 
+    double huber_delta_mono = std::sqrt(5.991);  
+    double huber_delta_stereo = std::sqrt(7.815); 
 };
 
 VanillaConfig LoadVanillaConfig(const std::string& path);
@@ -42,6 +47,8 @@ void RunVanillaWithStats(
     const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesMono,
     const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesStereo,
     int iterations,
+    double huberDeltaMono,  
+    double huberDeltaStereo,
     bool* pbStopFlag = nullptr);
 
 } // namespace ORB_SLAM3

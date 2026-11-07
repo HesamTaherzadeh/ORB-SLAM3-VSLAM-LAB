@@ -20,6 +20,8 @@
 
 #include "System.h"
 #include "Converter.h"
+#include "Optimizer.h"
+#include <glog/logging.h>
 #include <thread>
 #include <pangolin/pangolin.h>
 #include <iomanip>
@@ -548,6 +550,39 @@ void System::Shutdown()
         }*/
         /*usleep(5000);
     }*/
+
+    while(!mpLocalMapper->isFinished() || !mpLoopCloser->isFinished() || mpLoopCloser->isRunningGBA())   // a loop-closure GBA runs in its own thread
+        usleep(5000); // 5 milliseconds 
+
+    if(Optimizer::mbLiveBAAutotune)
+    {
+        Map* pMap = mpAtlas->GetCurrentMap();
+        if(pMap && pMap->KeyFramesInMap() > 0)
+        {
+            cout << "Final global BA with autotune" << endl;
+            const cov_auto_tune::AutotunerConfig& c = Optimizer::msFullBAConfig;
+            LOG(INFO) << "[System.cc] final BA autotune config (the ones that matter): remove_mono=" << c.remove_mono << " disable_huber=" << c.disable_huber
+                      << " huber_mono=" << c.huber_delta_mono << " huber_stereo=" << c.huber_delta_stereo;
+            LOG(INFO) << "[System.cc] final BA start keyframes=" << pMap->KeyFramesInMap() << " mappoints=" << pMap->MapPointsInMap();
+            Optimizer::GlobalBundleAdjustemnt(pMap, 10, NULL, pMap->GetOriginKF()->mnId, true, true); // atlas map, (ignored), no interruption,nLoopKF, apply immediately , with huber(lc is without lc), bautotune, bremovemono
+            LOG(INFO) << "[System.cc] final BA end";
+        }
+    }
+    else
+    { 
+        Map* pMap = mpAtlas->GetCurrentMap();
+        if(pMap && pMap->KeyFramesInMap() > 0)
+        {
+            cout << "Final global BA vanilla" << endl;
+            const VanillaConfig& c = Optimizer::msVanillaConfig;
+            LOG(INFO) << "[System.cc] final BA vanilla config: iterations=" << c.num_iterations << " stop=" << c.stop_criteria_threshold
+                      << " remove_mono=" << c.remove_mono << " disable_huber=" << c.disable_huber;
+            LOG(INFO) << "[System.cc] final BA start keyframes=" << pMap->KeyFramesInMap() << " mappoints=" << pMap->MapPointsInMap();
+            Optimizer::GlobalBundleAdjustemnt(pMap, Optimizer::msVanillaConfig.num_iterations, NULL /*pbstopflag is ignored*/, pMap->GetOriginKF()->mnId, true,
+                                              false/*not apply autotune*/, Optimizer::msVanillaConfig.remove_mono);
+            LOG(INFO) << "[System.cc] final BA end";
+        }
+    }
 
     if(!mStrSaveAtlasToFile.empty())
     {

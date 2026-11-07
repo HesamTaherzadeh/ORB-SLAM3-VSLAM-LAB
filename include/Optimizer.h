@@ -50,14 +50,18 @@ class Optimizer
 public:
 
     static bool mbLiveBAAutotune;
-    static cov_auto_tune::AutotunerConfig msLiveBAConfig;
+    static cov_auto_tune::AutotunerConfig msLocalBAConfig; // (string) localBA config path 
+    static cov_auto_tune::AutotunerConfig msFullBAConfig; // (string) FinalBA config path 
     static VanillaConfig msVanillaConfig;
 
     void static BundleAdjustment(const std::vector<KeyFrame*> &vpKF, const std::vector<MapPoint*> &vpMP,
                                  int nIterations = 5, bool *pbStopFlag=NULL, const unsigned long nLoopKF=0,
-                                 const bool bRobust = true);
+                                 const bool bRobust = true, const bool bAutotune = false,
+                                 const bool bRemoveMono = false);
     void static GlobalBundleAdjustemnt(Map* pMap, int nIterations=5, bool *pbStopFlag=NULL,
-                                       const unsigned long nLoopKF=0, const bool bRobust = true);
+                                       const unsigned long nLoopKF=0, const bool bRobust = true,
+                                       const bool bAutotune = false,    // true: optimize with the live autotuner (msLocalBAConfig)
+                                       const bool bRemoveMono = false); // vanilla only: no mono / body edges
     void static FullInertialBA(Map *pMap, int its, const bool bFixLocal=false, const unsigned long nLoopKF=0, bool *pbStopFlag=NULL, bool bInit=false, float priorG = 1e2, float priorA=1e6, Eigen::VectorXd *vSingVal = NULL, bool *bHess=NULL);
 
     void static LocalBundleAdjustment(KeyFrame* pKF, bool *pbStopFlag, Map *pMap, int& num_fixedKF, int& num_OptKF, int& num_MPs, int& num_edges);

@@ -135,7 +135,7 @@ int main(int argc, char **argv)
 
     google::InitGoogleLogging(argv[0]);
     FLAGS_logtostderr = 0;                       
-    FLAGS_alsologtostderr = 1;                    
+    FLAGS_alsologtostderr = 0;  // *
     FLAGS_timestamp_in_logfile_name = false;      
     const std::string glogPrefix = exp_folder + "/" + paddingZeros(exp_id) + "_glog_";
     for (const auto& [severity, name] : {std::pair{google::GLOG_INFO, "INFO"}, std::pair{google::GLOG_WARNING, "WARNING"},
@@ -157,9 +157,9 @@ int main(int argc, char **argv)
     if (autotune_given) {
         ORB_SLAM3::Optimizer::mbLiveBAAutotune = true;
         try {
-            ORB_SLAM3::Optimizer::msLiveBAConfig = cov_auto_tune::configFromYamlFile(autotune_config);
+            ORB_SLAM3::Optimizer::msLocalBAConfig = cov_auto_tune::configFromYamlFile(autotune_config);
             std::cout << "[AUTOTUNE CONFIG] loaded from " << autotune_config;
-            ORB_SLAM3::Optimizer::msLiveBAConfig.print(std::cout);
+            ORB_SLAM3::Optimizer::msLocalBAConfig.print(std::cout);
             std::cout << std::flush;
         } catch (const std::exception& e) {
             LOG(FATAL) << "Failed to load autotune config '" << autotune_config << "': " << e.what();

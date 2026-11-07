@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <map>
 #include <sstream>
+#include <utility>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -41,11 +42,6 @@ nlohmann::json g_autotuneBAs = nlohmann::json::array();
 std::map<std::string, Eigen::MatrixXd> map_of_label_to_covariance;
 bool first_ba_ {true};
 
-// Secondary config, hardcoded for now: the prior covariance injected into every stereo octave band (residual axes
-// u, v, u_right), indexed by band. Taken from batch29_autotune_h95_last1_w0_eig1e6_play0p_delta0_sqrton (Wishart off,
-// so a pure sample covariance R/k) KITTI 09 run 00000, BA 134: all 8 bands have their smallest eigenvector along disparity
-// and their largest along common horizontal (|cos| 0.965-0.999), inverse of the stored information
-// (no eigenvalue clamped). Takes precedence over use_last_covariance_as_prior.
 constexpr bool kInjectStereoPriorCovariance = true;
 const std::array<Eigen::Matrix3d, 8> kInjectedStereoPriorCovariance = {
     (Eigen::Matrix3d() << 0.0314469005, 0.002091210622, 0.0206216124, 0.002091210622, 0.02729088488, 0.006535285937, 0.0206216124, 0.006535285937, 0.04723221464).finished(),
@@ -68,6 +64,23 @@ void ReadIfPresent(const cv::FileNode& node, const std::string& name, T& value)
 
 } // namespace
 
+// fixed_cov_*: true / false (or 1 / 0)
+bool ReadBool(const cv::FileNode& node, const std::string& name, bool fallback)
+{
+    const cv::FileNode child = node[name];
+    if(child.empty())
+        return fallback;
+    if(child.isInt())
+        return static_cast<int>(child) != 0;
+    std::string text = child.string();
+    text = text.substr(0, text.find_first_of(" \t#"));    // OpenCV keeps an inline "# comment" in a string value
+    if(text == "true" || text == "True" || text == "1")
+        return true;
+    if(text == "false" || text == "False" || text == "0")
+        return false;
+    throw std::runtime_error("LoadVanillaConfig: " + name + " must be true or false, got '" + text + "'");
+}
+
 VanillaConfig LoadVanillaConfig(const std::string& path)
 {
     if(!std::ifstream(path).good())
@@ -85,18 +98,46 @@ VanillaConfig LoadVanillaConfig(const std::string& path)
 
     ReadIfPresent(node, "stop_criteria_threshold", config.stop_criteria_threshold);
     ReadIfPresent(node, "num_iterations", config.num_iterations);
-    ReadIfPresent(node, "correlationcoeff_uLuR", config.correlationcoeff_uLuR);
-    ReadIfPresent(node, "identity_information", config.identity_information);
+    int identityInformation = 0;                          // removed option; 0 (original ORB weights) is still accepted in old configs
+    ReadIfPresent(node, "identity_information", identityInformation);
+    if(identityInformation != 0)
+        throw std::runtime_error("LoadVanillaConfig: identity_information was removed; only 0 (ORB's octave weights) is supported");
     ReadIfPresent(node, "remove_mono", config.remove_mono);
-    if(config.correlationcoeff_uLuR <= -1.0 || config.correlationcoeff_uLuR >= 1.0)
-        throw std::runtime_error("LoadVanillaConfig: correlationcoeff_uLuR must be in (-1, 1)");
+    ReadIfPresent(node, "disable_huber", config.disable_huber);
+    // old key names: a missing key would silently fall back to false (plain vanilla), so refuse them
+    const std::array<std::pair<const char*, const char*>, 3> renamed = {{
+        {"fixed", "fixed_cov_final_ba"}, {"fixed_all", "fixed_cov_every_ba"}, {"fixed_gba", "fixed_cov_every_full_ba"}}};
+    for(const auto& [oldKey, newKey] : renamed)
+        if(!node[oldKey].empty())
+            throw std::runtime_error(std::string("LoadVanillaConfig: '") + oldKey + "' was renamed to '" + newKey + "'");
+    config.fixed_cov_final_ba = ReadBool(node, "fixed_cov_final_ba", config.fixed_cov_final_ba);
+    config.fixed_cov_every_ba = ReadBool(node, "fixed_cov_every_ba", config.fixed_cov_every_ba);
+    if(config.fixed_cov_every_ba && !config.fixed_cov_final_ba)
+        throw std::runtime_error("LoadVanillaConfig: fixed_cov_every_ba: true needs fixed_cov_final_ba: true");
+    config.fixed_cov_every_full_ba = ReadBool(node, "fixed_cov_every_full_ba", config.fixed_cov_every_full_ba);
+    if(config.fixed_cov_every_full_ba && !config.fixed_cov_final_ba)
+        throw std::runtime_error("LoadVanillaConfig: fixed_cov_every_full_ba: true needs fixed_cov_final_ba: true");
+    ReadIfPresent(node, "huber_delta_mono", config.huber_delta_mono);
+    ReadIfPresent(node, "huber_delta_stereo", config.huber_delta_stereo);
+    if(config.huber_delta_mono <= 0.0 || config.huber_delta_stereo <= 0.0)
+        throw std::runtime_error("LoadVanillaConfig: huber_delta_mono / huber_delta_stereo must be > 0");
+    config.fixed_cov_pose_optimization = ReadBool(node, "fixed_cov_pose_optimization", config.fixed_cov_pose_optimization);
+    if(config.fixed_cov_pose_optimization && !config.fixed_cov_final_ba)
+        throw std::runtime_error("LoadVanillaConfig: fixed_cov_pose_optimization: true needs fixed_cov_final_ba: true");
+    if(config.fixed_cov_every_full_ba && config.fixed_cov_every_ba)
+        throw std::runtime_error("LoadVanillaConfig: fixed_cov_every_full_ba and fixed_cov_every_ba both set; fixed_cov_every_ba already covers every full BA, pick one");
 
     LOG(INFO) << "[VANILLA CONFIG] loaded from " << path;
     LOG(INFO) << "[VANILLA CONFIG] stop_criteria_threshold=" << config.stop_criteria_threshold
               << " num_iterations=" << config.num_iterations
-              << " correlationcoeff_uLuR=" << config.correlationcoeff_uLuR
-              << " identity_information=" << config.identity_information
-              << " remove_mono=" << config.remove_mono;
+              << " remove_mono=" << config.remove_mono
+              << " disable_huber=" << config.disable_huber
+              << " fixed_cov_final_ba=" << config.fixed_cov_final_ba
+              << " fixed_cov_every_ba=" << config.fixed_cov_every_ba
+              << " fixed_cov_every_full_ba=" << config.fixed_cov_every_full_ba
+              << " fixed_cov_pose_optimization=" << config.fixed_cov_pose_optimization
+              << " huber_delta_mono=" << config.huber_delta_mono
+              << " huber_delta_stereo=" << config.huber_delta_stereo;
 
     return config;
 }
@@ -199,27 +240,6 @@ struct EdgeGroups
     std::map<int, std::vector<g2o::OptimizableGraph::Edge*>> stereo;
 };
 
-// Depth-quantile grouping (batch5), disabled: octave grouping is active again in GroupByOctaveBand below.
-// // Sort by depth and cut into nBands groups of equal size; key 0 = nearest.
-// std::map<int, std::vector<g2o::OptimizableGraph::Edge*>> GroupByDepthQuantile(
-//     const std::vector<g2o::OptimizableGraph::Edge*>& edges, size_t nBands)
-// {
-//     std::vector<std::pair<double, g2o::OptimizableGraph::Edge*>> byDepth;
-//     byDepth.reserve(edges.size());
-//     for(auto* e : edges)
-//     {
-//         const auto* point = static_cast<const g2o::VertexSBAPointXYZ*>(e->vertex(0));
-//         const auto* pose = static_cast<const g2o::VertexSE3Expmap*>(e->vertex(1));
-//         byDepth.emplace_back(pose->estimate().map(point->estimate()).z(), e);
-//     }
-//     std::sort(byDepth.begin(), byDepth.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-
-//     std::map<int, std::vector<g2o::OptimizableGraph::Edge*>> groups;
-//     for(size_t i = 0; i < byDepth.size(); ++i)
-//         groups[i * nBands / byDepth.size()].push_back(byDepth[i].second);
-//     return groups;
-// }
-
 EdgeGroups GroupByOctaveBand(
     const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesMono,
     const std::vector<int>& vnOctaveMono,
@@ -279,6 +299,28 @@ void RecordChi2ByType(
     RecordChi2ForType(stage, "stereo", vpEdgesStereo, huberDeltaStereo);
 }
 
+// see docs d1.md 
+nlohmann::json Objective(const cov_auto_tune::g2o::Groups& groups)
+{
+    double value = 0.0;
+    nlohmann::json perGroup = nlohmann::json::array();
+    for(const auto& [label, group] : groups)
+    {
+        if(group.information.size() == 0)
+            continue;
+        const Eigen::MatrixXd covariance = group.information.inverse();
+        const double logDet = std::log(covariance.determinant());
+        const double k = static_cast<double>(group.edges.size());
+        const double ps = group.config.prior_strength;
+        const double inner = (ps * k * group.config.prior_covariance_matrix).cwiseProduct(covariance).sum();   // <A, B>
+        const double term = -(ps + 1.0) * k * logDet + inner;
+        value += term;
+        perGroup.push_back({{"group", label}, {"edges", group.edges.size()}, {"log_det", logDet},
+                            {"inner_product", inner}, {"term", term}});
+    }
+    return {{"value", value}, {"groups", perGroup}};
+}
+
 } // namespace
 
 void RunLiveOctaveAutotune(
@@ -294,9 +336,11 @@ void RunLiveOctaveAutotune(
     g_autotuneBAs.push_back({{"ba", g_autotuneBAs.size()}, {"chi2", nlohmann::json::array()}, {"groups", nlohmann::json::array()}});
     auto& record = g_autotuneBAs.back();
     record["optimizations"] = nlohmann::json::array();
+    record["objective"] = nlohmann::json::array();             // one entry per outer iteration
     const auto optimize = [&](const char* stage, int requested)
     {
         const int iterations = optimizer.optimize(requested);
+        LOG(INFO) << "[Autotune.cc] optimize " << stage << " iterations=" << iterations << "/" << requested;
         const bool optimizationStop = pbStopFlag && *pbStopFlag;
         record["optimizations"].push_back({{"stage", stage}, {"requested", requested}, {"iterations", iterations},
                                            {"reached_stop_criterion", iterations > 0 && iterations < requested && !optimizationStop},
@@ -323,7 +367,8 @@ void RunLiveOctaveAutotune(
     optimizer.computeActiveErrors();
     RecordChi2ByType("initial", vpEdgesMono, vpEdgesStereo, config.huber_delta_mono, config.huber_delta_stereo);
 
-    LOG(INFO) << "[Autotune.cc]BA start stop=" << (pbStopFlag && *pbStopFlag);
+    LOG(INFO) << "[Autotune.cc] BA start mono_edges=" << vpEdgesMono.size() << " stereo_edges=" << vpEdgesStereo.size()
+              << " stop=" << (pbStopFlag && *pbStopFlag);
     if(config.pre_iterations > 0 && !(pbStopFlag && *pbStopFlag))
         optimize("pre", config.pre_iterations);
     LOG(INFO) << "[Autotune.cc]after pre stop=" << (pbStopFlag && *pbStopFlag);
@@ -333,10 +378,21 @@ void RunLiveOctaveAutotune(
         for(int t = 0; t < config.tune_iterations && !(pbStopFlag && *pbStopFlag); ++t)
         {
             autotuner.tune();
+            LOG(INFO) << "[Autotune.cc] tune outer=" << outer << " t=" << t;
         }
 
         if(!(pbStopFlag && *pbStopFlag))
             optimize("inner", config.inner_iterations);
+
+        nlohmann::json objective = Objective(autotuner.groups());
+        optimizer.computeActiveErrors();                                  
+        const double robustChi2 = optimizer.activeRobustChi2();
+        objective["outer"] = outer;
+        objective["active_robust_chi2"] = robustChi2;
+        objective["total"] = objective["value"].get<double>() + robustChi2;
+        LOG(INFO) << "[Autotune.cc] objective outer=" << outer << " groups=" << objective["value"].get<double>()
+                  << " active_robust_chi2=" << robustChi2 << " total=" << objective["total"].get<double>();
+        record["objective"].push_back(objective);
     }
 
     if(config.post_iterations > 0 && !(pbStopFlag && *pbStopFlag))
@@ -377,6 +433,7 @@ void RunLiveOctaveAutotune(
                                     {"flags", group.clamp_flags}});
     }
     record["time_s"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    LOG(INFO) << "[Autotune.cc] BA end time_s=" << record["time_s"].get<double>();
 }
 
 void RunVanillaWithStats(
@@ -384,10 +441,11 @@ void RunVanillaWithStats(
     const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesMono,
     const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesStereo,
     int iterations,
+    double huberDeltaMono,
+    double huberDeltaStereo,
     bool* pbStopFlag)
 {
     const auto start = std::chrono::steady_clock::now();
-    const double huberDeltaMono = std::sqrt(5.991), huberDeltaStereo = std::sqrt(7.815);
     g_autotuneBAs.push_back({{"ba", g_autotuneBAs.size()}, {"chi2", nlohmann::json::array()},
                              {"groups", nlohmann::json::array()}, {"optimizations", nlohmann::json::array()}});
     auto& record = g_autotuneBAs.back();
@@ -417,7 +475,8 @@ void RunVanillaWithStats(
         if(before.is_null())
             continue;
         line << std::fixed << std::setprecision(2) << " | " << type << " edges=" << before["edges"]
-             << " outliers " << 100.0 * before["frac_above_huber"].get<double>() << "% -> "
+             << " huber_delta=" << std::setprecision(4) << (std::string(type) == "mono" ? huberDeltaMono : huberDeltaStereo)
+             << std::setprecision(2) << " above delta " << 100.0 * before["frac_above_huber"].get<double>() << "% -> "
              << 100.0 * after["frac_above_huber"].get<double>() << "%";
     }
     LOG(INFO) << line.str();

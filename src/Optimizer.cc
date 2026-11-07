@@ -42,6 +42,8 @@
 #include "OptimizableTypes.h"
 
 #include "autotune/Autotune.h"
+#include <array>
+#include <glog/logging.h>
 
 
 namespace ORB_SLAM3
@@ -52,19 +54,75 @@ bool sortByVal(const pair<MapPoint*, int> &a, const pair<MapPoint*, int> &b)
 }
 
 bool Optimizer::mbLiveBAAutotune = false;
-cov_auto_tune::AutotunerConfig Optimizer::msLiveBAConfig = cov_auto_tune::AutotunerConfig();
+cov_auto_tune::AutotunerConfig Optimizer::msLocalBAConfig = cov_auto_tune::AutotunerConfig();
+cov_auto_tune::AutotunerConfig Optimizer::msFullBAConfig = cov_auto_tune::AutotunerConfig();
+
 VanillaConfig Optimizer::msVanillaConfig = VanillaConfig();
 
-void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
+namespace
+{ 
+// From sequence 08
+const std::array<Eigen::Matrix2d, 8> kFixedCovarianceMono = {{
+    (Eigen::Matrix2d() << 2.2241206090e-01, 2.0786271881e-03, 2.0786271881e-03, 2.1031958184e-01).finished(),   // octave 0
+    (Eigen::Matrix2d() << 3.8661916616e-01, -5.3241075041e-03, -5.3241075041e-03, 3.3201540654e-01).finished(),   // octave 1
+    (Eigen::Matrix2d() << 5.5806526077e-01, 1.6429009530e-02, 1.6429009530e-02, 4.7704313026e-01).finished(),   // octave 2
+    (Eigen::Matrix2d() << 8.1007490659e-01, 3.1073674218e-02, 3.1073674218e-02, 7.8368934883e-01).finished(),   // octave 3
+    (Eigen::Matrix2d() << 1.0763261819e+00, 8.5418155923e-02, 8.5418155923e-02, 1.2931578627e+00).finished(),   // octave 4
+    (Eigen::Matrix2d() << 1.8465885797e+00, 1.3072975025e-01, 1.3072975025e-01, 2.0651268815e+00).finished(),   // octave 5
+    (Eigen::Matrix2d() << 2.6175763982e+00, 1.3259589739e-01, 1.3259589739e-01, 3.1678299930e+00).finished(),   // octave 6
+    (Eigen::Matrix2d() << 4.0322745313e+00, 1.5429118476e-01, 1.5429118476e-01, 5.1494334499e+00).finished(),   // octave 7
+}};
+// From sequence 08
+const std::array<Eigen::Matrix3d, 8> kFixedCovarianceStereo = {{
+    (Eigen::Matrix3d() << 1.2805017851e-01, 8.2621003792e-03, 7.5751551137e-02, 8.2621003792e-03, 1.4239234059e-01, -4.1678226375e-03, 7.5751551137e-02, -4.1678226375e-03, 1.5690334788e-01).finished(),   // octave 0
+    (Eigen::Matrix3d() << 2.0951758766e-01, -1.6850572588e-03, 1.4524614031e-01, -1.6850572588e-03, 2.0196597858e-01, -2.7259003333e-02, 1.4524614031e-01, -2.7259003333e-02, 2.7272489275e-01).finished(),   // octave 1
+    (Eigen::Matrix3d() << 3.1903809173e-01, -6.1623970584e-03, 2.0364995440e-01, -6.1623970584e-03, 3.1430787026e-01, -2.2850731868e-02, 2.0364995440e-01, -2.2850731868e-02, 3.7027946710e-01).finished(),   // octave 2
+    (Eigen::Matrix3d() << 4.7115419771e-01, 1.9582793699e-02, 3.0653321661e-01, 1.9582793699e-02, 5.1052381553e-01, -9.0625508988e-03, 3.0653321661e-01, -9.0625508988e-03, 5.5863325908e-01).finished(),   // octave 3
+    (Eigen::Matrix3d() << 6.4455700391e-01, 6.7780588575e-02, 4.0341336179e-01, 6.7780588575e-02, 9.4614064048e-01, 3.7920277216e-02, 4.0341336179e-01, 3.7920277216e-02, 7.6849540083e-01).finished(),   // octave 4
+    (Eigen::Matrix3d() << 9.8359200287e-01, 5.6160188787e-02, 6.7476509259e-01, 5.6160188787e-02, 1.4586911949e+00, 4.1510747134e-02, 6.7476509259e-01, 4.1510747134e-02, 1.2289038763e+00).finished(),   // octave 5
+    (Eigen::Matrix3d() << 1.5492901274e+00, 8.5698294078e-02, 1.0850416059e+00, 8.5698294078e-02, 2.3888893465e+00, 4.4086940222e-02, 1.0850416059e+00, 4.4086940222e-02, 1.9103951736e+00).finished(),   // octave 6
+    (Eigen::Matrix3d() << 2.3782961519e+00, 2.0740217143e-01, 1.7133130139e+00, 2.0740217143e-01, 4.1942435264e+00, 8.6674731940e-02, 1.7133130139e+00, 8.6674731940e-02, 2.8461800040e+00).finished(),   // octave 7
+}};
+
+/**
+Recieves covariances array -- octave and type (mono or stereo)
+*/
+template<size_t N, typename Matrix>
+Matrix FixedInformation(const std::array<Matrix, N>& covariances, int octave)
+{
+    const Matrix information = covariances[octave].inverse();
+    return 0.5 * (information + information.transpose());
+}
+
+/**
+Logging where the code is called --- what is the type(mono or stereo) and what are the octaves and info and covariance
+*/
+template<typename Edge>
+void LogFixedEdges(const std::vector<Edge*>& edges, const std::vector<int>& octaves, const char* type, const char* where)
+{
+    std::map<int, size_t> count;
+    std::map<int, Edge*> first;
+    for(size_t i = 0; i < edges.size(); ++i)
+        if(count[octaves[i]]++ == 0)
+            first[octaves[i]] = edges[i];
+    for(const auto& [octave, e] : first)
+        LOG(INFO) << "[Optimizer.cc] " << where << " fixed " << type << " octave=" << octave << " edges=" << count[octave]
+                  << "\ninformation=\n" << e->information() << "\ncovariance=\n" << e->information().inverse();
+}
+} // namespace
+
+void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust,
+                                       const bool bAutotune, const bool bRemoveMono)
 {
     vector<KeyFrame*> vpKFs = pMap->GetAllKeyFrames();
     vector<MapPoint*> vpMP = pMap->GetAllMapPoints();
-    BundleAdjustment(vpKFs,vpMP,nIterations,pbStopFlag, nLoopKF, bRobust);
+    BundleAdjustment(vpKFs,vpMP,nIterations,pbStopFlag, nLoopKF, bRobust, bAutotune, bRemoveMono);
 }
 
 
 void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<MapPoint *> &vpMP,
-                                 int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
+                                 int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust,
+                                 const bool bAutotune, const bool bRemoveMono)
 {
     vector<bool> vbNotIncludedMP;
     vbNotIncludedMP.resize(vpMP.size());
@@ -116,6 +174,9 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
     vector<MapPoint*> vpMapPointEdgeStereo;
     vpMapPointEdgeStereo.reserve(nExpectedSize);
 
+    vector<int> vnOctaveMono;  
+    vector<int> vnOctaveStereo;
+
 
     // Set KeyFrame vertices
 
@@ -134,8 +195,19 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
             maxKFid=pKF->mnId;
     }
 
-    const float thHuber2D = sqrt(5.99);
-    const float thHuber3D = sqrt(7.815);
+    const float thHuber2D = bAutotune ? Optimizer::msLocalBAConfig.huber_delta_mono : Optimizer::msVanillaConfig.huber_delta_mono;
+    const float thHuber3D = bAutotune ? Optimizer::msLocalBAConfig.huber_delta_stereo : Optimizer::msVanillaConfig.huber_delta_stereo;
+    const bool removeMono = bAutotune ? Optimizer::msLocalBAConfig.remove_mono : bRemoveMono;     
+    const bool disableHuber = bAutotune ? Optimizer::msLocalBAConfig.disable_huber : Optimizer::msVanillaConfig.disable_huber;
+    const bool robust = bRobust && !disableHuber;  // only the final one will have the disable huber -- if bRobust is false (no robust -- orb model)
+    const VanillaConfig& vanilla = Optimizer::msVanillaConfig; 
+    const bool isFinalBA = bRobust;   
+    const bool fixThisFullBA = isFinalBA || vanilla.fixed_cov_every_ba || vanilla.fixed_cov_every_full_ba;  // see d5.md
+    const bool fixedCovariance = !bAutotune && vanilla.fixed_cov_final_ba && fixThisFullBA;  
+    LOG(INFO) << "[Optimizer.cc] full BA " << (bAutotune ? "autotune" : "vanilla")
+              << " disable_huber=" << disableHuber << " robust=" << robust << " fixed=" << fixedCovariance;
+    if(!bAutotune)  
+        LOG(INFO) << "[COV] " << (bRobust ? "final BA" : "loop GBA") << ": " << (fixedCovariance ? "fixed" : "ORB");
 
     // Set MapPoint vertices
     for(size_t i=0; i<vpMP.size(); i++)
@@ -165,7 +237,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
 
             const int leftIndex = get<0>(mit->second);
 
-            if(leftIndex != -1 && pKF->mvuRight[get<0>(mit->second)]<0)
+            if(!removeMono && leftIndex != -1 && pKF->mvuRight[get<0>(mit->second)]<0)
             {
                 const cv::KeyPoint &kpUn = pKF->mvKeysUn[leftIndex];
 
@@ -178,9 +250,12 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
                 e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKF->mnId)));
                 e->setMeasurement(obs);
                 const float &invSigma2 = pKF->mvInvLevelSigma2[kpUn.octave];
-                e->setInformation(Eigen::Matrix2d::Identity()*invSigma2);
+                if(fixedCovariance)
+                    e->setInformation(FixedInformation(kFixedCovarianceMono, kpUn.octave));
+                else
+                    e->setInformation(Eigen::Matrix2d::Identity()*invSigma2);
 
-                if(bRobust)
+                if(robust)
                 {
                     g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
                     e->setRobustKernel(rk);
@@ -192,6 +267,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
                 optimizer.addEdge(e);
 
                 vpEdgesMono.push_back(e);
+                vnOctaveMono.push_back(kpUn.octave);
                 vpEdgeKFMono.push_back(pKF);
                 vpMapPointEdgeMono.push_back(pMP);
             }
@@ -210,9 +286,11 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
                 e->setMeasurement(obs);
                 const float &invSigma2 = pKF->mvInvLevelSigma2[kpUn.octave];
                 Eigen::Matrix3d Info = Eigen::Matrix3d::Identity()*invSigma2;
+                if(fixedCovariance)
+                    Info = FixedInformation(kFixedCovarianceStereo, kpUn.octave);
                 e->setInformation(Info);
 
-                if(bRobust)
+                if(robust)
                 {
                     g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
                     e->setRobustKernel(rk);
@@ -228,11 +306,12 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
                 optimizer.addEdge(e);
 
                 vpEdgesStereo.push_back(e);
+                vnOctaveStereo.push_back(kpUn.octave);  
                 vpEdgeKFStereo.push_back(pKF);
                 vpMapPointEdgeStereo.push_back(pMP);
             }
 
-            if(pKF->mpCamera2){
+            if(!removeMono && pKF->mpCamera2){  
                 int rightIndex = get<1>(mit->second);
 
                 if(rightIndex != -1 && rightIndex < pKF->mvKeysRight.size()){
@@ -250,9 +329,12 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
                     const float &invSigma2 = pKF->mvInvLevelSigma2[kp.octave];
                     e->setInformation(Eigen::Matrix2d::Identity()*invSigma2);
 
-                    g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
-                    e->setRobustKernel(rk);
-                    rk->setDelta(thHuber2D);
+                    if(robust)
+                    {
+                        g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
+                        e->setRobustKernel(rk);
+                        rk->setDelta(thHuber2D);
+                    }
 
                     Sophus::SE3f Trl = pKF-> GetRelativePoseTrl();
                     e->mTrl = g2o::SE3Quat(Trl.unit_quaternion().cast<double>(), Trl.translation().cast<double>());
@@ -280,10 +362,42 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
         }
     }
 
+    if(fixedCovariance)
+    {
+        const char* where = bRobust ? "final full BA" : (vanilla.fixed_cov_every_full_ba ? "full BA (fixed_cov_every_full_ba)" : "full BA (fixed_cov_every_ba)");
+        LogFixedEdges(vpEdgesMono, vnOctaveMono, "mono", where);
+        LogFixedEdges(vpEdgesStereo, vnOctaveStereo, "stereo", where);
+    }
+
     // Optimize!
     optimizer.setVerbose(false);
-    optimizer.initializeOptimization();
-    optimizer.optimize(nIterations);
+    if(bAutotune)
+    {  
+        std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end());  // *
+        std::vector<g2o::OptimizableGraph::Edge*> vpEdgesStereoGeneric(vpEdgesStereo.begin(), vpEdgesStereo.end());
+        solver->setStopCriteriaThreshold(Optimizer::msLocalBAConfig.stop_criteria_threshold);
+        LOG(INFO) << "[Optimizer.cc] global BA autotune keyframes=" << vpKFs.size() << " mappoints=" << vpMP.size()
+                  << " mono_edges=" << vpEdgesMono.size() << " stereo_edges=" << vpEdgesStereo.size()
+                  << " body_edges=" << vpEdgesBody.size() << " huber_mono=" << thHuber2D << " huber_stereo=" << thHuber3D
+                  << " remove_mono=" << removeMono;
+        RunLiveOctaveAutotune(optimizer, vpEdgesMonoGeneric, vnOctaveMono, vpEdgesStereoGeneric, vnOctaveStereo,
+                              Optimizer::msLocalBAConfig, pbStopFlag);
+        LOG(INFO) << "[Optimizer.cc] global BA autotune done";
+    }
+    else
+    {
+        LOG(INFO) << "[Optimizer.cc] global BA vanilla keyframes=" << vpKFs.size() << " mappoints=" << vpMP.size()
+                  << " mono_edges=" << vpEdgesMono.size() << " stereo_edges=" << vpEdgesStereo.size()
+                  << " body_edges=" << vpEdgesBody.size() << " iterations=" << nIterations << " remove_mono=" << removeMono
+                  << " final=" << bRobust;
+        if(bRobust) 
+        {
+            solver->setStopCriteriaThreshold(Optimizer::msVanillaConfig.stop_criteria_threshold);
+            LOG(INFO) << "[Optimizer.cc] final BA vanilla stop_criteria_threshold=" << Optimizer::msVanillaConfig.stop_criteria_threshold;
+        }
+        optimizer.initializeOptimization();
+        optimizer.optimize(nIterations);
+    }
     Verbose::PrintMess("BA: End of the optimization", Verbose::VERBOSITY_NORMAL);
 
     // Recover optimized data
@@ -296,11 +410,11 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
         g2o::VertexSE3Expmap* vSE3 = static_cast<g2o::VertexSE3Expmap*>(optimizer.vertex(pKF->mnId));
 
         g2o::SE3Quat SE3quat = vSE3->estimate();
-        if(nLoopKF==pMap->GetOriginKF()->mnId)
+        if(nLoopKF==pMap->GetOriginKF()->mnId)  // *
         {
             pKF->SetPose(Sophus::SE3f(SE3quat.rotation().cast<float>(), SE3quat.translation().cast<float>()));
         }
-        else
+        else  // *
         {
             pKF->mTcwGBA = Sophus::SE3d(SE3quat.rotation(),SE3quat.translation()).cast<float>();
             pKF->mnBAGlobalForKF = nLoopKF;
@@ -855,13 +969,26 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     vpEdgesStereo.reserve(N);
     vnIndexEdgeStereo.reserve(N);
 
-    const float deltaMono = sqrt(5.991);
-    const float deltaStereo = sqrt(7.815);
+    const float deltaMono = Optimizer::msVanillaConfig.huber_delta_mono;
+    const float deltaStereo = Optimizer::msVanillaConfig.huber_delta_stereo;
+
+    const bool fixedCovariance = !Optimizer::mbLiveBAAutotune && Optimizer::msVanillaConfig.fixed_cov_pose_optimization;
+    vector<int> vnOctaveMono, vnOctaveStereo;  // *
+    if(!Optimizer::mbLiveBAAutotune)
+    {
+        static bool loggedCov = false;  // log only once which weight we use 
+        if(!loggedCov)
+        {
+            LOG(INFO) << "[COV] tracking: " << (fixedCovariance ? "fixed" : "ORB");
+            loggedCov = true;
+        }
+    }
 
     {
     unique_lock<mutex> lock(MapPoint::mGlobalMutex);
-
-    for(int i=0; i<N; i++)
+    
+    // Here is where we create the edges from the mvpMapPoints 
+    for(int i=0; i<N; i++) // map point vertices 
     {
         MapPoint* pMP = pFrame->mvpMapPoints[i];
         if(pMP)
@@ -883,7 +1010,10 @@ int Optimizer::PoseOptimization(Frame *pFrame)
                     e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(0)));
                     e->setMeasurement(obs);
                     const float invSigma2 = pFrame->mvInvLevelSigma2[kpUn.octave];
-                    e->setInformation(Eigen::Matrix2d::Identity()*invSigma2);
+                    if(fixedCovariance)
+                        e->setInformation(FixedInformation(kFixedCovarianceMono, kpUn.octave));
+                    else
+                        e->setInformation(Eigen::Matrix2d::Identity()*invSigma2);
 
                     g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
                     e->setRobustKernel(rk);
@@ -896,6 +1026,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
                     vpEdgesMono.push_back(e);
                     vnIndexEdgeMono.push_back(i);
+                    vnOctaveMono.push_back(kpUn.octave);
                 }
                 else  // Stereo observation
                 {
@@ -913,6 +1044,8 @@ int Optimizer::PoseOptimization(Frame *pFrame)
                     e->setMeasurement(obs);
                     const float invSigma2 = pFrame->mvInvLevelSigma2[kpUn.octave];
                     Eigen::Matrix3d Info = Eigen::Matrix3d::Identity()*invSigma2;
+                    if(fixedCovariance)
+                        Info = FixedInformation(kFixedCovarianceStereo, kpUn.octave);
                     e->setInformation(Info);
 
                     g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
@@ -930,9 +1063,10 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
                     vpEdgesStereo.push_back(e);
                     vnIndexEdgeStereo.push_back(i);
+                    vnOctaveStereo.push_back(kpUn.octave);
                 }
             }
-            //SLAM with respect a rigid body
+            //SLAM with respect a rigid body (never runs in kitti)
             else{
                 nInitialCorrespondences++;
 
@@ -951,7 +1085,10 @@ int Optimizer::PoseOptimization(Frame *pFrame)
                     e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(optimizer.vertex(0)));
                     e->setMeasurement(obs);
                     const float invSigma2 = pFrame->mvInvLevelSigma2[kpUn.octave];
-                    e->setInformation(Eigen::Matrix2d::Identity() * invSigma2);
+                    if(fixedCovariance)  // *
+                        e->setInformation(FixedInformation(kFixedCovarianceMono, kpUn.octave));
+                    else
+                        e->setInformation(Eigen::Matrix2d::Identity() * invSigma2);
 
                     g2o::RobustKernelHuber *rk = new g2o::RobustKernelHuber;
                     e->setRobustKernel(rk);
@@ -964,6 +1101,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
                     vpEdgesMono.push_back(e);
                     vnIndexEdgeMono.push_back(i);
+                    vnOctaveMono.push_back(kpUn.octave);
                 }
                 else {
                     kpUn = pFrame->mvKeysRight[i - pFrame->Nleft];
@@ -999,25 +1137,40 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     }
     }
 
+    if(fixedCovariance)
+    {
+        static bool logged = false;  // only log once 
+        if(!logged && !(vpEdgesMono.empty() && vpEdgesStereo.empty()))
+        {
+            LogFixedEdges(vpEdgesMono, vnOctaveMono, "mono", "first pose optimization (fixed_cov_pose_optimization)");
+            LogFixedEdges(vpEdgesStereo, vnOctaveStereo, "stereo", "first pose optimization (fixed_cov_pose_optimization)");
+            logged = true;
+        }
+    }
+
     if(nInitialCorrespondences<3)
         return 0;
 
     // We perform 4 optimizations, after each optimization we classify observation as inlier/outlier
     // At the next optimization, outliers are not included, but at the end they can be classified as inliers again.
-    const float chi2Mono[4]={5.991,5.991,5.991,5.991};
-    const float chi2Stereo[4]={7.815,7.815,7.815, 7.815};
+    const float chi2MonoTh = Optimizer::msVanillaConfig.huber_delta_mono * Optimizer::msVanillaConfig.huber_delta_mono;  // threshold is delta -- so we power it by two
+    const float chi2StereoTh = Optimizer::msVanillaConfig.huber_delta_stereo * Optimizer::msVanillaConfig.huber_delta_stereo;  // threshold is delta -- so we power it by two
+    const float chi2Mono[4]={chi2MonoTh,chi2MonoTh,chi2MonoTh,chi2MonoTh};
+    const float chi2Stereo[4]={chi2StereoTh,chi2StereoTh,chi2StereoTh,chi2StereoTh};
     const int its[4]={10,10,10,10};    
 
     int nBad=0;
+    int nBadMono=0, nBadStereo=0;  // the ones set out not to be in the optimization
+    size_t nRounds=0;
     for(size_t it=0; it<4; it++)
     {
         Tcw = pFrame->GetPose();
-        vSE3->setEstimate(g2o::SE3Quat(Tcw.unit_quaternion().cast<double>(),Tcw.translation().cast<double>()));
+        vSE3->setEstimate(g2o::SE3Quat(Tcw.unit_quaternion().cast<double>(),Tcw.translation().cast<double>())); //constant-velocity prediction: mVelocity * mLastFrame.GetPose() comes from Tracking.cc
 
         optimizer.initializeOptimization(0);
         optimizer.optimize(its[it]);
 
-        nBad=0;
+        nBad=0; nBadMono=0; nBadStereo=0; nRounds=it+1;
         for(size_t i=0, iend=vpEdgesMono.size(); i<iend; i++)
         {
             ORB_SLAM3::EdgeSE3ProjectXYZOnlyPose* e = vpEdgesMono[i];
@@ -1033,9 +1186,9 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
             if(chi2>chi2Mono[it])
             {                
-                pFrame->mvbOutlier[idx]=true;
+                pFrame->mvbOutlier[idx]=true; // all were set false at creation time -- so at first nothing is outlier
                 e->setLevel(1);
-                nBad++;
+                nBad++; nBadMono++;
             }
             else
             {
@@ -1064,7 +1217,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
             {
                 pFrame->mvbOutlier[idx]=true;
                 e->setLevel(1);
-                nBad++;
+                nBad++; nBadMono++;
             }
             else
             {
@@ -1093,7 +1246,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
             {
                 pFrame->mvbOutlier[idx]=true;
                 e->setLevel(1);
-                nBad++;
+                nBad++; nBadStereo++;
             }
             else
             {                
@@ -1115,6 +1268,10 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     Sophus::SE3<float> pose(SE3quat_recov.rotation().cast<float>(),
             SE3quat_recov.translation().cast<float>());
     pFrame->SetPose(pose);
+
+    LOG(INFO) << "[Tracking] pose only ba : removed " << nBadMono << " out of " << vpEdgesMono.size() + vpEdgesMono_FHR.size()
+              << " with delta " << deltaMono << " at dim 2 | removed " << nBadStereo << " out of " << vpEdgesStereo.size()
+              << " with delta " << deltaStereo << " at dim 3 | rounds " << nRounds << "/4";
 
     return nInitialCorrespondences-nBad;
 }
@@ -1204,7 +1361,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         solver->setUserLambdaInit(100.0);
 
     optimizer.setAlgorithm(solver);
-    optimizer.setVerbose(Optimizer::mbLiveBAAutotune && Optimizer::msLiveBAConfig.verbose);
+    optimizer.setVerbose(false);
 
     if(pbStopFlag)
         optimizer.setForceStopFlag(pbStopFlag);
@@ -1283,14 +1440,16 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     vector<MapPoint*> vpMapPointEdgeStereo;
     vpMapPointEdgeStereo.reserve(nExpectedSize);
 
-    const float thHuberMono = Optimizer::msLiveBAConfig.huber_delta_mono;
-    const float thHuberStereo = Optimizer::msLiveBAConfig.huber_delta_stereo;
+    const VanillaConfig& vanilla = Optimizer::msVanillaConfig;
+    const float thHuberMono = Optimizer::mbLiveBAAutotune ? Optimizer::msLocalBAConfig.huber_delta_mono : vanilla.huber_delta_mono;
+    const float thHuberStereo = Optimizer::mbLiveBAAutotune ? Optimizer::msLocalBAConfig.huber_delta_stereo : vanilla.huber_delta_stereo;
 
     int nPoints = 0;
 
     int nEdges = 0;
-    const bool removeMono = Optimizer::mbLiveBAAutotune ? Optimizer::msLiveBAConfig.remove_mono
-                                                        : Optimizer::msVanillaConfig.remove_mono;
+    // const bool removeMono = Optimizer::mbLiveBAAutotune ? Optimizer::msLocalBAConfig.remove_mono
+    //                                                     : Optimizer::msVanillaConfig.remove_mono;
+    const bool removeMono = !Optimizer::mbLiveBAAutotune && vanilla.remove_mono;  
 
     for(list<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++)
     {
@@ -1356,22 +1515,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
                     e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKFi->mnId)));
                     e->setMeasurement(obs);
                     const float &invSigma2 = pKFi->mvInvLevelSigma2[kpUn.octave];
-                    const double makecorrelated = Optimizer::mbLiveBAAutotune ? 0.0 : Optimizer::msVanillaConfig.correlationcoeff_uLuR;
-                    if(makecorrelated == 0.0)
-                    {
-                        Eigen::Matrix3d Info = Eigen::Matrix3d::Identity()*invSigma2;
-                        e->setInformation(Info);
-                    }
-                    else
-                    {
-                        Eigen::Matrix3d Cov = Eigen::Matrix3d::Identity() / static_cast<double>(invSigma2);
-                        Cov(2,2) *= 2.0;
-                        Cov(0,2) = makecorrelated * sqrt(Cov(0,0) * Cov(2,2));
-                        Cov(2,0) = Cov(0,2);
-                        // Cov(0, 2) = Cov(2, 0) = makecorrelated / static_cast<double>(invSigma2);
-
-                        e->setInformation(Cov.inverse());
-                    }
+                    Eigen::Matrix3d Info = Eigen::Matrix3d::Identity()*invSigma2;
+                    e->setInformation(Info);
 
                     g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
                     e->setRobustKernel(rk);
@@ -1438,37 +1583,48 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
 
     if(Optimizer::mbLiveBAAutotune)
     {   //edges and vector of their octaves.
-        std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end()); //C++ members are invariant not covariant 
+        std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end());  // *
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesStereoGeneric(vpEdgesStereo.begin(), vpEdgesStereo.end());
-        solver->setStopCriteriaThreshold(Optimizer::msLiveBAConfig.stop_criteria_threshold);
+        solver->setStopCriteriaThreshold(Optimizer::msLocalBAConfig.stop_criteria_threshold);
         RunLiveOctaveAutotune(optimizer, vpEdgesMonoGeneric, vnOctaveMono, vpEdgesStereoGeneric, vnOctaveStereo,
-                              Optimizer::msLiveBAConfig, pbStopFlag);
+                              Optimizer::msLocalBAConfig, pbStopFlag);
     }
     else
     {
         solver->setStopCriteriaThreshold(Optimizer::msVanillaConfig.stop_criteria_threshold);
-        if(Optimizer::msVanillaConfig.identity_information)
+        LOG(INFO) << "[COV] local BA: " << (Optimizer::msVanillaConfig.fixed_cov_every_ba ? "fixed" : "ORB");
+        if(Optimizer::msVanillaConfig.fixed_cov_every_ba)  // *
         {
-            for(auto* e : vpEdgesMono)
-                e->setInformation(Eigen::Matrix2d::Identity());
-            for(auto* e : vpEdgesBody)
-                e->setInformation(Eigen::Matrix2d::Identity());
-            for(auto* e : vpEdgesStereo)
-                e->setInformation(Eigen::Matrix3d::Identity());
+            for(size_t i = 0; i < vpEdgesMono.size(); ++i)
+                vpEdgesMono[i]->setInformation(FixedInformation(kFixedCovarianceMono, vnOctaveMono[i]));
+            for(size_t i = 0; i < vpEdgesStereo.size(); ++i)
+                vpEdgesStereo[i]->setInformation(FixedInformation(kFixedCovarianceStereo, vnOctaveStereo[i]));
+            static bool logged = false;                  
+            if(!logged)
+            {
+                LogFixedEdges(vpEdgesMono, vnOctaveMono, "mono", "first local BA (fixed_cov_every_ba)");
+                LogFixedEdges(vpEdgesStereo, vnOctaveStereo, "stereo", "first local BA (fixed_cov_every_ba)");
+                logged = true;
+            }
         }
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end());
         vpEdgesMonoGeneric.insert(vpEdgesMonoGeneric.end(), vpEdgesBody.begin(), vpEdgesBody.end());
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesStereoGeneric(vpEdgesStereo.begin(), vpEdgesStereo.end());
         RunVanillaWithStats(optimizer, vpEdgesMonoGeneric, vpEdgesStereoGeneric,
-                            Optimizer::msVanillaConfig.num_iterations, pbStopFlag);
+                            Optimizer::msVanillaConfig.num_iterations, thHuberMono, thHuberStereo, pbStopFlag);
     }
 
     vector<pair<KeyFrame*,MapPoint*> > vToErase;
     vToErase.reserve(vpEdgesMono.size()+vpEdgesBody.size()+vpEdgesStereo.size());
 
-    const bool eraseAtHuber = Optimizer::mbLiveBAAutotune && Optimizer::msLiveBAConfig.erase_at_huber_delta;
-    const double chi2EraseMono = eraseAtHuber ? double(thHuberMono) * thHuberMono : 5.991;
-    const double chi2EraseStereo = eraseAtHuber ? double(thHuberStereo) * thHuberStereo : 7.815;
+    // erase at huber 
+    const bool eraseAtHuber = Optimizer::mbLiveBAAutotune && Optimizer::msLocalBAConfig.erase_at_huber_delta;
+    const double chi2EraseMono = Optimizer::mbLiveBAAutotune ? (eraseAtHuber ? double(thHuberMono) * thHuberMono : 5.991)
+                                                             : vanilla.huber_delta_mono * vanilla.huber_delta_mono;
+    const double chi2EraseStereo = Optimizer::mbLiveBAAutotune ? (eraseAtHuber ? double(thHuberStereo) * thHuberStereo : 7.815)
+                                                               : vanilla.huber_delta_stereo * vanilla.huber_delta_stereo;
+    // const double chi2EraseMono = 5.991;
+    // const double chi2EraseStereo = 7.815;
     size_t nErasedMono = 0, nErasedStereo = 0;
 
     // Check inlier observations       
@@ -1519,7 +1675,11 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
             ++nErasedStereo;
         }
     }
-    RecordErased(nErasedMono, nErasedStereo, chi2EraseMono, chi2EraseStereo);
+    RecordErased(nErasedMono, nErasedStereo, chi2EraseMono, chi2EraseStereo); // saves to log 
+    LOG(INFO) << "[LocalBA] removed " << nErasedMono << " out of " << vpEdgesMono.size() + vpEdgesBody.size()
+              << " with delta " << std::sqrt(chi2EraseMono) << " at dim 2 (huber " << thHuberMono << ")"
+              << " | removed " << nErasedStereo << " out of " << vpEdgesStereo.size()
+              << " with delta " << std::sqrt(chi2EraseStereo) << " at dim 3 (huber " << thHuberStereo << ")";
 
 
     // Get Map Mutex
@@ -2908,10 +3068,9 @@ void Optimizer::LocalInertialBA(KeyFrame *pKF, bool *pbStopFlag, Map *pMap, int&
     {   // only the visual edges are grouped and tuned; the inertial edges are in no group (allow_unregistered_edges) and keep their information
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end());
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesStereoGeneric(vpEdgesStereo.begin(), vpEdgesStereo.end());
-        solver->setStopCriteriaThreshold(Optimizer::msLiveBAConfig.stop_criteria_threshold);
-        // no stop flag: like the original, Tracking cannot abort a local inertial BA (its flag is only set after the optimization)
+        solver->setStopCriteriaThreshold(Optimizer::msLocalBAConfig.stop_criteria_threshold);
         RunLiveOctaveAutotune(optimizer, vpEdgesMonoGeneric, vnOctaveMono, vpEdgesStereoGeneric, vnOctaveStereo,
-                              Optimizer::msLiveBAConfig, nullptr);
+                              Optimizer::msLocalBAConfig, nullptr);
     }
     else
     {
@@ -3574,6 +3733,7 @@ void Optimizer::InertialOptimization(Map *pMap, Eigen::Matrix3d &Rwg, double &sc
 
 void Optimizer::LocalBundleAdjustment(KeyFrame* pMainKF,vector<KeyFrame*> vpAdjustKF, vector<KeyFrame*> vpFixedKF, bool *pbStopFlag)
 {
+    LOG(WARNING) << "LOCALBA map merge got called";
     bool bShowImages = false;
 
     vector<MapPoint*> vpMPs;
