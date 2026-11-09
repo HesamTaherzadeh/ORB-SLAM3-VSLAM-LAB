@@ -1600,8 +1600,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
                                                              : vanilla.huber_delta_mono * vanilla.huber_delta_mono;
     const double chi2EraseStereo = Optimizer::mbLiveBAAutotune ? (eraseAtHuber ? double(thHuberStereo) * thHuberStereo : 7.815)
                                                                : vanilla.huber_delta_stereo * vanilla.huber_delta_stereo;
-    // const double chi2EraseMono = 5.991;
-    // const double chi2EraseStereo = 7.815;
+
     size_t nErasedMono = 0, nErasedStereo = 0;
 
     // Check inlier observations       
