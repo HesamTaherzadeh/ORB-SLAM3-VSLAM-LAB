@@ -17,7 +17,6 @@
 
 #include <glog/logging.h>
 #include <nlohmann/json.hpp>
-#include <opencv2/core/persistence.hpp>
 
 #include "cov_auto_tune/autotuner_config.h"
 #include "cov_auto_tune/g2o/autotuner.h"
@@ -28,16 +27,6 @@ namespace ORB_SLAM3
 namespace
 {
 
-// One record per local BA, kept in memory during the run and written once at shutdown by SaveAutotuneStats:
-// {"ba", "time_s",
-//  "optimizations": [{stage (pre / inner / post), requested, iterations (done; 0 = solver failed),
-//                     reached_stop_criterion (g2o stopped before the requested iterations on its own),
-//                     tracking_stop_flag (Tracking's abort flag, pbStopFlag, was set after this optimize())}],
-//  "chi2": [{stage (initial / final), type (mono / stereo), edges, mean_chi2, huber_delta, frac_above_huber}],
-//  "groups": [{group, edges, after the last tune():
-//              information (matrix written to the edges), cov_eigenvalues (of its inverse, ascending),
-//              cov_eigenvalues_before_clamp, flags (per eigenvalue: -1 min_eig_cov, 0 free, +1 max_eig_cov)}],
-//  "erased": {mono, stereo (observations erased after the BA), chi2_mono, chi2_stereo (the erase thresholds used)}}
 nlohmann::json g_autotuneBAs = nlohmann::json::array();
 std::map<std::string, Eigen::MatrixXd> map_of_label_to_covariance;
 bool first_ba_ {true};
@@ -54,93 +43,9 @@ const std::array<Eigen::Matrix3d, 8> kInjectedStereoPriorCovariance = {
     (Eigen::Matrix3d() << 1.76564417, 0.1596446412, 1.669418929, 0.1596446412, 1.087848242, 0.1096829513, 1.669418929, 0.1096829513, 1.90218122).finished(),
 };
 
-template<typename T>
-void ReadIfPresent(const cv::FileNode& node, const std::string& name, T& value)
-{
-    const cv::FileNode child = node[name];
-    if(!child.empty())
-        child >> value;
-}
 
 } // namespace
 
-// fixed_cov_*: true / false (or 1 / 0)
-bool ReadBool(const cv::FileNode& node, const std::string& name, bool fallback)
-{
-    const cv::FileNode child = node[name];
-    if(child.empty())
-        return fallback;
-    if(child.isInt())
-        return static_cast<int>(child) != 0;
-    std::string text = child.string();
-    text = text.substr(0, text.find_first_of(" \t#"));    // OpenCV keeps an inline "# comment" in a string value
-    if(text == "true" || text == "True" || text == "1")
-        return true;
-    if(text == "false" || text == "False" || text == "0")
-        return false;
-    throw std::runtime_error("LoadVanillaConfig: " + name + " must be true or false, got '" + text + "'");
-}
-
-VanillaConfig LoadVanillaConfig(const std::string& path)
-{
-    if(!std::ifstream(path).good())
-        throw std::runtime_error("LoadVanillaConfig: could not open " + path);
-
-    cv::FileStorage fs(path, cv::FileStorage::READ);
-    if(!fs.isOpened())
-        throw std::runtime_error("LoadVanillaConfig: could not parse " + path);
-
-    VanillaConfig config;
-
-    cv::FileNode node = fs["vanilla"];
-    if(node.empty())
-        node = fs.root();
-
-    ReadIfPresent(node, "stop_criteria_threshold", config.stop_criteria_threshold);
-    ReadIfPresent(node, "num_iterations", config.num_iterations);
-    int identityInformation = 0;                          // removed option; 0 (original ORB weights) is still accepted in old configs
-    ReadIfPresent(node, "identity_information", identityInformation);
-    if(identityInformation != 0)
-        throw std::runtime_error("LoadVanillaConfig: identity_information was removed; only 0 (ORB's octave weights) is supported");
-    ReadIfPresent(node, "remove_mono", config.remove_mono);
-    ReadIfPresent(node, "disable_huber", config.disable_huber);
-    // old key names: a missing key would silently fall back to false (plain vanilla), so refuse them
-    const std::array<std::pair<const char*, const char*>, 3> renamed = {{
-        {"fixed", "fixed_cov_final_ba"}, {"fixed_all", "fixed_cov_every_ba"}, {"fixed_gba", "fixed_cov_every_full_ba"}}};
-    for(const auto& [oldKey, newKey] : renamed)
-        if(!node[oldKey].empty())
-            throw std::runtime_error(std::string("LoadVanillaConfig: '") + oldKey + "' was renamed to '" + newKey + "'");
-    config.fixed_cov_final_ba = ReadBool(node, "fixed_cov_final_ba", config.fixed_cov_final_ba);
-    config.fixed_cov_every_ba = ReadBool(node, "fixed_cov_every_ba", config.fixed_cov_every_ba);
-    if(config.fixed_cov_every_ba && !config.fixed_cov_final_ba)
-        throw std::runtime_error("LoadVanillaConfig: fixed_cov_every_ba: true needs fixed_cov_final_ba: true");
-    config.fixed_cov_every_full_ba = ReadBool(node, "fixed_cov_every_full_ba", config.fixed_cov_every_full_ba);
-    if(config.fixed_cov_every_full_ba && !config.fixed_cov_final_ba)
-        throw std::runtime_error("LoadVanillaConfig: fixed_cov_every_full_ba: true needs fixed_cov_final_ba: true");
-    ReadIfPresent(node, "huber_delta_mono", config.huber_delta_mono);
-    ReadIfPresent(node, "huber_delta_stereo", config.huber_delta_stereo);
-    if(config.huber_delta_mono <= 0.0 || config.huber_delta_stereo <= 0.0)
-        throw std::runtime_error("LoadVanillaConfig: huber_delta_mono / huber_delta_stereo must be > 0");
-    config.fixed_cov_pose_optimization = ReadBool(node, "fixed_cov_pose_optimization", config.fixed_cov_pose_optimization);
-    if(config.fixed_cov_pose_optimization && !config.fixed_cov_final_ba)
-        throw std::runtime_error("LoadVanillaConfig: fixed_cov_pose_optimization: true needs fixed_cov_final_ba: true");
-    if(config.fixed_cov_every_full_ba && config.fixed_cov_every_ba)
-        throw std::runtime_error("LoadVanillaConfig: fixed_cov_every_full_ba and fixed_cov_every_ba both set; fixed_cov_every_ba already covers every full BA, pick one");
-
-    LOG(INFO) << "[VANILLA CONFIG] loaded from " << path;
-    LOG(INFO) << "[VANILLA CONFIG] stop_criteria_threshold=" << config.stop_criteria_threshold
-              << " num_iterations=" << config.num_iterations
-              << " remove_mono=" << config.remove_mono
-              << " disable_huber=" << config.disable_huber
-              << " fixed_cov_final_ba=" << config.fixed_cov_final_ba
-              << " fixed_cov_every_ba=" << config.fixed_cov_every_ba
-              << " fixed_cov_every_full_ba=" << config.fixed_cov_every_full_ba
-              << " fixed_cov_pose_optimization=" << config.fixed_cov_pose_optimization
-              << " huber_delta_mono=" << config.huber_delta_mono
-              << " huber_delta_stereo=" << config.huber_delta_stereo;
-
-    return config;
-}
 
 namespace
 {
@@ -248,21 +153,10 @@ EdgeGroups GroupByOctaveBand(
     const std::vector<std::vector<int>>& octaveBands)
 {
     EdgeGroups groups;
-    // batch16: one group per octave band of solver.octave_bands (one band with octaves 0-7 = one mono and one stereo group).
-    // The default bands {0}, ..., {7} give one group per octave, as the per-octave grouping below did.
     for(size_t i = 0; i < vpEdgesMono.size(); ++i)
         groups.mono[OctaveBandIndex(vnOctaveMono[i], octaveBands)].push_back(vpEdgesMono[i]);
     for(size_t i = 0; i < vpEdgesStereo.size(); ++i)
         groups.stereo[OctaveBandIndex(vnOctaveStereo[i], octaveBands)].push_back(vpEdgesStereo[i]);
-
-    // groups.mono = GroupByDepthQuantile(vpEdgesMono, octaveBands.size());
-    // groups.stereo = GroupByDepthQuantile(vpEdgesStereo, octaveBands.size());
-
-    // Per-octave grouping (batches 7-15), replaced by the octave bands above:
-    // for(size_t i = 0; i < vpEdgesMono.size(); ++i)
-    //     groups.mono[vnOctaveMono[i]].push_back(vpEdgesMono[i]);
-    // for(size_t i = 0; i < vpEdgesStereo.size(); ++i)
-    //     groups.stereo[vnOctaveStereo[i]].push_back(vpEdgesStereo[i]);
     return groups;
 }
 

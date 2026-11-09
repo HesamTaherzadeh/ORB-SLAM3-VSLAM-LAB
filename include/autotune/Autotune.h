@@ -1,9 +1,12 @@
 #ifndef ORB_SLAM3_AUTOTUNE_H
 #define ORB_SLAM3_AUTOTUNE_H
 
+#include <array>  
 #include <cmath>
 #include <string>
 #include <vector>
+
+#include <Eigen/Core>  
 
 #include "cov_auto_tune/autotuner_config.h"
 #include "Thirdparty/g2o/g2o/core/sparse_optimizer.h"
@@ -24,9 +27,9 @@ struct VanillaConfig
     bool fixed_cov_pose_optimization = false;  // fixes pnp 
     double huber_delta_mono = std::sqrt(5.991);  
     double huber_delta_stereo = std::sqrt(7.815); 
+    std::array<Eigen::Matrix2d, 8> fixed_cov_mono{}; // here to be read from config 
+    std::array<Eigen::Matrix3d, 8> fixed_cov_stereo{};  
 };
-
-VanillaConfig LoadVanillaConfig(const std::string& path);
 
 // writes one JSON record per local BA: chi2 before / after and the clamp flags of every group after the last tune()
 void SaveAutotuneStats(const std::string& path);

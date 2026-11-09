@@ -39,6 +39,74 @@ void removeSubstring(std::string& str, const std::string& substring) {
 void LoadIMU(const string &strImuPath, vector<double> &vTimeStamps, vector<cv::Point3f> &vAcc, vector<cv::Point3f> &vGyro);
 
 
+namespace
+{
+template<typename T>
+void ReadIfPresent(const YAML::Node& node, const std::string& name, T& value)
+{
+    if(node[name])  
+        value = node[name].as<T>(); 
+}
+
+ORB_SLAM3::VanillaConfig LoadVanillaConfig(const std::string& path, const std::string& sequence)
+{
+    if(!std::ifstream(path).good())
+        throw std::runtime_error("LoadVanillaConfig: could not open " + path);
+
+    const YAML::Node root = YAML::LoadFile(path);
+
+    ORB_SLAM3::VanillaConfig config;
+
+    const YAML::Node node = root["vanilla"] ? root["vanilla"] : root;
+
+    ReadIfPresent(node, "stop_criteria_threshold", config.stop_criteria_threshold);
+    ReadIfPresent(node, "num_iterations", config.num_iterations);
+    ReadIfPresent(node, "remove_mono", config.remove_mono);
+    ReadIfPresent(node, "disable_huber", config.disable_huber);
+    ReadIfPresent(node, "fixed_cov_final_ba", config.fixed_cov_final_ba);
+    ReadIfPresent(node, "fixed_cov_every_ba", config.fixed_cov_every_ba);
+    ReadIfPresent(node, "fixed_cov_every_full_ba", config.fixed_cov_every_full_ba);
+    ReadIfPresent(node, "fixed_cov_pose_optimization", config.fixed_cov_pose_optimization);
+    ReadIfPresent(node, "huber_delta_mono", config.huber_delta_mono);
+    ReadIfPresent(node, "huber_delta_stereo", config.huber_delta_stereo);
+    std::string fixedCovPath;  // path  for the covariance yamls 
+    ReadIfPresent(node, "fixed_cov_path", fixedCovPath);
+    if(config.fixed_cov_final_ba || config.fixed_cov_every_ba || config.fixed_cov_every_full_ba || config.fixed_cov_pose_optimization)  // if we had fixed covariances -- read them from yaml 
+    {
+        const size_t at = fixedCovPath.find("{sequence}");
+        if(at != std::string::npos)
+            fixedCovPath.replace(at, 10, sequence);
+        const YAML::Node cov = YAML::LoadFile(fixedCovPath);
+        if(cov["mono"].size() != 8 || cov["stereo"].size() != 8)
+            throw std::runtime_error("LoadVanillaConfig: " + fixedCovPath + " needs 8 mono and 8 stereo entries");
+        for(int o = 0; o < 8; ++o)
+        {
+            const std::vector<double> m = cov["mono"][o].as<std::vector<double>>();
+            const std::vector<double> s = cov["stereo"][o].as<std::vector<double>>();
+            if(m.size() != 4 || s.size() != 9)
+                throw std::runtime_error("LoadVanillaConfig: octave " + std::to_string(o) + " needs 4 mono and 9 stereo values in " + fixedCovPath);
+            config.fixed_cov_mono[o] = Eigen::Map<const Eigen::Matrix<double, 2, 2, Eigen::RowMajor>>(m.data());
+            config.fixed_cov_stereo[o] = Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(s.data());
+        }
+        LOG(INFO) << "[VANILLA CONFIG] fixed_cov_path=" << fixedCovPath;
+    }
+
+    LOG(INFO) << "[VANILLA CONFIG] loaded from " << path;
+    LOG(INFO) << "[VANILLA CONFIG] stop_criteria_threshold=" << config.stop_criteria_threshold
+              << " num_iterations=" << config.num_iterations
+              << " remove_mono=" << config.remove_mono
+              << " disable_huber=" << config.disable_huber
+              << " fixed_cov_final_ba=" << config.fixed_cov_final_ba
+              << " fixed_cov_every_ba=" << config.fixed_cov_every_ba
+              << " fixed_cov_every_full_ba=" << config.fixed_cov_every_full_ba
+              << " fixed_cov_pose_optimization=" << config.fixed_cov_pose_optimization
+              << " huber_delta_mono=" << config.huber_delta_mono
+              << " huber_delta_stereo=" << config.huber_delta_stereo;
+
+    return config;
+}
+} // namespace
+
 int main(int argc, char *argv[])
 {
 
@@ -158,7 +226,7 @@ int main(int argc, char *argv[])
         }
     } else {
         try {
-            ORB_SLAM3::Optimizer::msVanillaConfig = ORB_SLAM3::LoadVanillaConfig(vanilla_config);
+            ORB_SLAM3::Optimizer::msVanillaConfig = LoadVanillaConfig(vanilla_config, sequence_path.substr(sequence_path.find_last_of('/') + 1));
         } catch (const std::exception& e) {
             LOG(FATAL) << "Failed to load vanilla config '" << vanilla_config << "': " << e.what();
         }
