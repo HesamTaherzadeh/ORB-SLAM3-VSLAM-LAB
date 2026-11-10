@@ -76,7 +76,8 @@ ORB_SLAM3::VanillaConfig LoadVanillaConfig(const std::string& path, const std::s
     ReadIfPresent(node, "huber_delta_mono", config.huber_delta_mono);
     ReadIfPresent(node, "huber_delta_stereo", config.huber_delta_stereo);
     ReadIfPresent(node, "fixed_cov_epipolar", config.fixed_cov_epipolar);
-    std::string fixedCovPath;  // path  for the covariance yamls 
+    std::string fixedCovPath;  // path  for the covariance yamls
+    ReadIfPresent(node, "fixed_cov_path", fixedCovPath);
     if(config.fixed_cov_final_ba || config.fixed_cov_every_ba || config.fixed_cov_every_full_ba || config.fixed_cov_pose_optimization || config.fixed_cov_triangulation || config.fixed_cov_fuse || config.fixed_cov_epipolar)  // if we had fixed covariances -- read them from yaml
     {
         const size_t at = fixedCovPath.find("{sequence}");
