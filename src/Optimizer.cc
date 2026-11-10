@@ -1602,6 +1602,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
                                                                : vanilla.huber_delta_stereo * vanilla.huber_delta_stereo;
 
     size_t nErasedMono = 0, nErasedStereo = 0;
+    size_t nBadMPMono = 0, nBadMPStereo = 0, nNegDepthMono = 0, nNegDepthStereo = 0;  // for the [GATES] local_ba log
 
     // Check inlier observations       
     for(size_t i=0, iend=vpEdgesMono.size(); i<iend;i++)
@@ -1610,10 +1611,14 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         MapPoint* pMP = vpMapPointEdgeMono[i];
 
         if(pMP->isBad())
+        {
+            ++nBadMPMono;
             continue;
+        }
 
         if(e->chi2()>chi2EraseMono || !e->isDepthPositive())
         {
+            if(e->chi2()<=chi2EraseMono) ++nNegDepthMono;  // erased only for negative depth
             KeyFrame* pKFi = vpEdgeKFMono[i];
             vToErase.push_back(make_pair(pKFi,pMP));
             ++nErasedMono;
@@ -1626,10 +1631,14 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         MapPoint* pMP = vpMapPointEdgeBody[i];
 
         if(pMP->isBad())
+        {
+            ++nBadMPMono;
             continue;
+        }
 
         if(e->chi2()>chi2EraseMono || !e->isDepthPositive())
         {
+            if(e->chi2()<=chi2EraseMono) ++nNegDepthMono;  // erased only for negative depth
             KeyFrame* pKFi = vpEdgeKFBody[i];
             vToErase.push_back(make_pair(pKFi,pMP));
             ++nErasedMono;
@@ -1642,20 +1651,29 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         MapPoint* pMP = vpMapPointEdgeStereo[i];
 
         if(pMP->isBad())
+        {
+            ++nBadMPStereo;
             continue;
+        }
 
         if(e->chi2()>chi2EraseStereo || !e->isDepthPositive())
         {
+            if(e->chi2()<=chi2EraseStereo) ++nNegDepthStereo;  // erased only for negative depth
             KeyFrame* pKFi = vpEdgeKFStereo[i];
             vToErase.push_back(make_pair(pKFi,pMP));
             ++nErasedStereo;
         }
     }
     RecordErased(nErasedMono, nErasedStereo, chi2EraseMono, chi2EraseStereo); // saves to log 
-    LOG(INFO) << "[LocalBA] removed " << nErasedMono << " out of " << vpEdgesMono.size() + vpEdgesBody.size()
-              << " with delta " << std::sqrt(chi2EraseMono) << " at dim 2 (huber " << thHuberMono << ")"
-              << " | removed " << nErasedStereo << " out of " << vpEdgesStereo.size()
-              << " with delta " << std::sqrt(chi2EraseStereo) << " at dim 3 (huber " << thHuberStereo << ")";
+    const size_t nEdgesMono = vpEdgesMono.size() + vpEdgesBody.size(), nEdgesStereo = vpEdgesStereo.size();
+    LOG(INFO) << "[GATES] local_ba kf=" << pKF->mnId
+              << " mode=" << (Optimizer::mbLiveBAAutotune ? "autotune" : (vanilla.fixed_cov_every_ba ? "fixed" : "ORB"))
+              << " | mono edges=" << nEdgesMono << " bad_mp=" << nBadMPMono
+              << " outliers=" << nErasedMono << " (chi2=" << nErasedMono - nNegDepthMono << " neg_depth=" << nNegDepthMono << ")"
+              << " inliers=" << nEdgesMono - nBadMPMono - nErasedMono << " delta=" << std::sqrt(chi2EraseMono) << " huber=" << thHuberMono
+              << " | stereo edges=" << nEdgesStereo << " bad_mp=" << nBadMPStereo
+              << " outliers=" << nErasedStereo << " (chi2=" << nErasedStereo - nNegDepthStereo << " neg_depth=" << nNegDepthStereo << ")"
+              << " inliers=" << nEdgesStereo - nBadMPStereo - nErasedStereo << " delta=" << std::sqrt(chi2EraseStereo) << " huber=" << thHuberStereo;
 
 
     // Get Map Mutex

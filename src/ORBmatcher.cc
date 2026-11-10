@@ -18,6 +18,8 @@
 
 
 #include "ORBmatcher.h"
+#include "LocalMapping.h"
+#include <glog/logging.h>
 
 #include<limits.h>
 
@@ -907,6 +909,7 @@ namespace ORB_SLAM3
     int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2,
                                            vector<pair<size_t, size_t> > &vMatchedPairs, const bool bOnlyStereo, const bool bCoarse)
     {
+        int nEpiTested = 0, nEpiRejected = 0;  // epipolar gate: candidates tested / rejected (for the [GATES] epipolar log)
         const DBoW2::FeatureVector &vFeatVec1 = pKF1->mFeatVec;
         const DBoW2::FeatureVector &vFeatVec2 = pKF2->mFeatVec;
 
@@ -1069,7 +1072,9 @@ namespace ORB_SLAM3
 
                         }
 
-                        if(bCoarse || pCamera1->epipolarConstrain(pCamera2,kp1,kp2,R12,t12,pKF1->mvLevelSigma2[kp1.octave],pKF2->mvLevelSigma2[kp2.octave])) // MODIFICATION_2
+                        const bool bEpiOK = bCoarse || pCamera1->epipolarConstrain(pCamera2,kp1,kp2,R12,t12,pKF1->mvLevelSigma2[kp1.octave],pKF2->mvLevelSigma2[kp2.octave]);
+                        if(!bCoarse) { nEpiTested++; if(!bEpiOK) nEpiRejected++; }  // for the [GATES] epipolar log
+                        if(bEpiOK) // MODIFICATION_2
                         {
                             bestIdx2 = idx2;
                             bestDist = dist;
@@ -1142,6 +1147,11 @@ namespace ORB_SLAM3
             vMatchedPairs.push_back(make_pair(i,vMatches12[i]));
         }
 
+        LOG(INFO) << "[GATES] epipolar kf1=" << pKF1->mnId << " kf2=" << pKF2->mnId
+                  << " mode=" << (LocalMapping::msVanillaConfig.fixed_cov_epipolar ? "fixed" : "ORB")
+                  << " chi2=" << LocalMapping::msVanillaConfig.epipolar_chi2
+                  << " tested=" << nEpiTested << " rejected=" << nEpiRejected << " matches=" << nmatches;
+
         return nmatches;
     }
 
@@ -1174,6 +1184,7 @@ namespace ORB_SLAM3
 
         // For debbuging
         int count_notMP = 0, count_bad=0, count_isinKF = 0, count_negdepth = 0, count_notinim = 0, count_dist = 0, count_normal=0, count_notidx = 0, count_thcheck = 0;
+        const int nGateRejected0 = mnGateRejected;  // mnGateRejected accumulates over calls -- log this call's share
         for(int i=0; i<nMPs; i++)
         {
             MapPoint* pMP = vpMapPoints[i];
@@ -1280,8 +1291,13 @@ namespace ORB_SLAM3
                     const float er = ur-kpr;
                     const float e2 = ex*ex+ey*ey+er*er;
 
-                    if(e2*pKF->mvInvLevelSigma2[kpLevel]>7.8)
+                    const Eigen::Vector3d e(ex, ey, er);
+                    if(LocalMapping::msVanillaConfig.fixed_cov_fuse ? e.dot(LocalMapping::msVanillaConfig.fixed_cov_stereo[kpLevel].inverse() * e) > (LocalMapping::msVanillaConfig.huber_delta_stereo * LocalMapping::msVanillaConfig.huber_delta_stereo)
+                                                                    : e2*pKF->mvInvLevelSigma2[kpLevel]>7.8)
+                    {
+                        mnGateRejected++;
                         continue;
+                    }
                 }
                 else
                 {
@@ -1291,8 +1307,13 @@ namespace ORB_SLAM3
                     const float ey = uv(1)-kpy;
                     const float e2 = ex*ex+ey*ey;
 
-                    if(e2*pKF->mvInvLevelSigma2[kpLevel]>5.99)
+                    const Eigen::Vector2d e(ex, ey);
+                    if(LocalMapping::msVanillaConfig.fixed_cov_fuse ? e.dot(LocalMapping::msVanillaConfig.fixed_cov_mono[kpLevel].inverse() * e) > (LocalMapping::msVanillaConfig.huber_delta_mono * LocalMapping::msVanillaConfig.huber_delta_mono)
+                                                                    : e2*pKF->mvInvLevelSigma2[kpLevel]>5.99)
+                    {
+                        mnGateRejected++;
                         continue;
+                    }
                 }
 
                 if(bRight) idx += pKF->NLeft;
@@ -1333,6 +1354,13 @@ namespace ORB_SLAM3
                 count_thcheck++;
 
         }
+
+        LOG(INFO) << "[GATES] fuse_call kf=" << pKF->mnId << " map_points=" << nMPs
+                  << " not_mp=" << count_notMP << " bad=" << count_bad << " in_kf=" << count_isinKF
+                  << " neg_depth=" << count_negdepth << " not_in_image=" << count_notinim << " dist=" << count_dist
+                  << " normal=" << count_normal << " no_candidates=" << count_notidx
+                  << " gate_rejected=" << (mnGateRejected - nGateRejected0)
+                  << " no_desc_match=" << count_thcheck << " fused=" << nFused;
 
         return nFused;
     }

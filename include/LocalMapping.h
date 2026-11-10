@@ -26,6 +26,7 @@
 #include "Tracking.h"
 #include "KeyFrameDatabase.h"
 #include "Settings.h"
+#include "autotune/Autotune.h"
 
 #include <mutex>
 
@@ -110,6 +111,8 @@ public:
     // not consider far points (clouds)
     bool mbFarPoints;
     float mThFarPoints;
+
+    static VanillaConfig msVanillaConfig;
 
 #ifdef REGISTER_TIMES
     vector<double> vdKFInsert_ms;

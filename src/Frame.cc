@@ -133,6 +133,7 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     if(mvKeys.empty())
         return;
 
+    // (ht) kitti passes this 
     UndistortKeyPoints();
 
 #ifdef REGISTER_TIMES
@@ -194,7 +195,7 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     monoLeft = -1;
     monoRight = -1;
 
-    AssignFeaturesToGrid();
+    AssignFeaturesToGrid(); // (ht) spatial indexing for fast lookup -- we dont care
 }
 
 Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, GeometricCamera* pCamera,Frame* pPrevF, const IMU::Calib &ImuCalib)
@@ -810,12 +811,12 @@ void Frame::ComputeImageBounds(const cv::Mat &imLeft)
 
 void Frame::ComputeStereoMatches()
 {
-    mvuRight = vector<float>(N,-1.0f);
+    mvuRight = vector<float>(N,-1.0f); // (ht) rvry feature is mono at first 
     mvDepth = vector<float>(N,-1.0f);
 
     const int thOrbDist = (ORBmatcher::TH_HIGH+ORBmatcher::TH_LOW)/2;
 
-    const int nRows = mpORBextractorLeft->mvImagePyramid[0].rows;
+    const int nRows = mpORBextractorLeft->mvImagePyramid[0].rows; //370
 
     //Assign keypoints to row table
     vector<vector<size_t> > vRowIndices(nRows,vector<size_t>());
@@ -958,7 +959,7 @@ void Frame::ComputeStereoMatches()
                     bestuR = uL-0.01;
                 }
                 mvDepth[iL]=mbf/disparity;
-                mvuRight[iL] = bestuR;
+                mvuRight[iL] = bestuR; // (ht) this is the u_r in the stereo residual (u, v, u_r)
                 vDistIdx.push_back(pair<int,int>(bestDist,iL));
             }
         }

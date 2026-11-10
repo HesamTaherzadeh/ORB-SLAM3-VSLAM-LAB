@@ -69,11 +69,15 @@ ORB_SLAM3::VanillaConfig LoadVanillaConfig(const std::string& path, const std::s
     ReadIfPresent(node, "fixed_cov_every_ba", config.fixed_cov_every_ba);
     ReadIfPresent(node, "fixed_cov_every_full_ba", config.fixed_cov_every_full_ba);
     ReadIfPresent(node, "fixed_cov_pose_optimization", config.fixed_cov_pose_optimization);
+    ReadIfPresent(node, "fixed_cov_triangulation", config.fixed_cov_triangulation);
+    ReadIfPresent(node, "fixed_cov_fuse", config.fixed_cov_fuse);
+    ReadIfPresent(node, "fixed_cov_epipolar", config.fixed_cov_epipolar);
+    ReadIfPresent(node, "epipolar_chi2", config.epipolar_chi2);
     ReadIfPresent(node, "huber_delta_mono", config.huber_delta_mono);
     ReadIfPresent(node, "huber_delta_stereo", config.huber_delta_stereo);
+    ReadIfPresent(node, "fixed_cov_epipolar", config.fixed_cov_epipolar);
     std::string fixedCovPath;  // path  for the covariance yamls 
-    ReadIfPresent(node, "fixed_cov_path", fixedCovPath);
-    if(config.fixed_cov_final_ba || config.fixed_cov_every_ba || config.fixed_cov_every_full_ba || config.fixed_cov_pose_optimization)  // if we had fixed covariances -- read them from yaml 
+    if(config.fixed_cov_final_ba || config.fixed_cov_every_ba || config.fixed_cov_every_full_ba || config.fixed_cov_pose_optimization || config.fixed_cov_triangulation || config.fixed_cov_fuse || config.fixed_cov_epipolar)  // if we had fixed covariances -- read them from yaml
     {
         const size_t at = fixedCovPath.find("{sequence}");
         if(at != std::string::npos)
@@ -102,6 +106,10 @@ ORB_SLAM3::VanillaConfig LoadVanillaConfig(const std::string& path, const std::s
               << " fixed_cov_every_ba=" << config.fixed_cov_every_ba
               << " fixed_cov_every_full_ba=" << config.fixed_cov_every_full_ba
               << " fixed_cov_pose_optimization=" << config.fixed_cov_pose_optimization
+              << " fixed_cov_triangulation=" << config.fixed_cov_triangulation
+              << " fixed_cov_fuse=" << config.fixed_cov_fuse
+              << " fixed_cov_epipolar=" << config.fixed_cov_epipolar
+              << " epipolar_chi2=" << config.epipolar_chi2
               << " huber_delta_mono=" << config.huber_delta_mono
               << " huber_delta_stereo=" << config.huber_delta_stereo;
 
@@ -237,6 +245,8 @@ int main(int argc, char **argv)
         try {
             // Path to sequence = /home/hesam/Autotune-studio/VSLAM-LAB-Benchmark/KITTI/04 the last will become '04'
             ORB_SLAM3::Optimizer::msVanillaConfig = LoadVanillaConfig(vanilla_config, sequence_path.substr(sequence_path.find_last_of('/') + 1)); 
+            ORB_SLAM3::LocalMapping::msVanillaConfig = LoadVanillaConfig(vanilla_config, sequence_path.substr(sequence_path.find_last_of('/') + 1)); 
+
         } catch (const std::exception& e) {
             LOG(FATAL) << "Failed to load vanilla config '" << vanilla_config << "': " << e.what();
         }

@@ -39,6 +39,8 @@ namespace ORB_SLAM3
 
         ORBmatcher(float nnratio=0.6, bool checkOri=true);
 
+        int mnGateRejected = 0;  // candidates rejected by the Fuse chi2 gates (for the [GATES] logs)
+
         // Computes the Hamming distance between two ORB descriptors
         static int DescriptorDistance(const cv::Mat &a, const cv::Mat &b);
 

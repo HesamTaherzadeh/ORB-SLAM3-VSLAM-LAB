@@ -28,8 +28,11 @@
 #include<mutex>
 #include<chrono>
 
+
 namespace ORB_SLAM3
 {
+
+VanillaConfig LocalMapping::msVanillaConfig = VanillaConfig();
 
 LocalMapping::LocalMapping(System* pSys, Atlas *pAtlas, const float bMonocular, bool bInertial, const string &_strSeqName):
     mpSystem(pSys), mbMonocular(bMonocular), mbInertial(bInertial), mbResetRequested(false), mbResetRequestedActiveMap(false), mbFinishRequested(false), mbFinished(true), mpAtlas(pAtlas), bInitializing(false),
@@ -52,6 +55,13 @@ LocalMapping::LocalMapping(System* pSys, Atlas *pAtlas, const float bMonocular, 
 
 }
 
+template<size_t N, typename Matrix>
+Matrix FixedInformation(const std::array<Matrix, N>& covariances, int octave)
+{
+    const Matrix information = covariances[octave].inverse();
+    return 0.5 * (information + information.transpose());
+}
+
 void LocalMapping::SetLoopCloser(LoopClosing* pLoopCloser)
 {
     mpLoopCloser = pLoopCloser;
@@ -64,6 +74,7 @@ void LocalMapping::SetTracker(Tracking *pTracker)
 
 void LocalMapping::Run()
 {
+    // HT : Entry function of its own thread new thread(&LocalMapping::Run, mpLocalMapper) 
     mbFinished = false;
 
     while(1)
@@ -71,7 +82,7 @@ void LocalMapping::Run()
         // Tracking will see that Local Mapping is busy
         SetAcceptKeyFrames(false);
 
-        // Check if there are keyframes in the queue
+        // Check if there are keyframes in the queue 
         if(CheckNewKeyFrames() && !mbBadImu)
         {
 #ifdef REGISTER_TIMES
@@ -80,7 +91,8 @@ void LocalMapping::Run()
 
             std::chrono::steady_clock::time_point time_StartProcessKF = std::chrono::steady_clock::now();
 #endif
-            // BoW conversion and insertion in Map
+            // BoW conversion and insertion in Map 
+            // HT : Make map points fill which keyframe sees them | other unrelated stuff
             ProcessNewKeyFrame();
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndProcessKF = std::chrono::steady_clock::now();
@@ -89,7 +101,8 @@ void LocalMapping::Run()
             vdKFInsert_ms.push_back(timeProcessKF);
 #endif
 
-            // Check recent MapPoints
+            // Check recent MapPoints 
+            // (HT) (probation check for young map points) -- get affected by pnp 2 -- a stricter PnP lowers found, and more young points die.
             MapPointCulling();
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndMPCulling = std::chrono::steady_clock::now();
@@ -319,7 +332,7 @@ void LocalMapping::ProcessNewKeyFrame()
             {
                 if(!pMP->IsInKeyFrame(mpCurrentKeyFrame))
                 {
-                    pMP->AddObservation(mpCurrentKeyFrame, i);
+                    pMP->AddObservation(mpCurrentKeyFrame, i); // (ht) point is observed by the kf 
                     pMP->UpdateNormalAndDepth();
                     pMP->ComputeDistinctiveDescriptors();
                 }
@@ -365,7 +378,8 @@ void LocalMapping::MapPointCulling()
 
         if(pMP->isBad())
             lit = mlpRecentAddedMapPoints.erase(lit);
-        else if(pMP->GetFoundRatio()<0.25f)
+            // (ht) hit rate in tracking --  the frames in which the point was actually matched and survived / counts the frames in which tracking expected to see the point 
+        else if(pMP->GetFoundRatio()<0.25f) 
         {
             pMP->SetBadFlag();
             lit = mlpRecentAddedMapPoints.erase(lit);
@@ -393,6 +407,8 @@ void LocalMapping::CreateNewMapPoints()
     // For stereo inertial case
     if(mbMonocular)
         nn=30;
+
+    // (ht) nn is the number of keyframes adjacent to current kf
     vector<KeyFrame*> vpNeighKFs = mpCurrentKeyFrame->GetBestCovisibilityKeyFrames(nn);
 
     if (mbInertial)
@@ -412,6 +428,7 @@ void LocalMapping::CreateNewMapPoints()
 
     ORBmatcher matcher(th,false);
 
+    // (ht) get info about the current kf -- like the pose and calibration
     Sophus::SE3<float> sophTcw1 = mpCurrentKeyFrame->GetPose();
     Eigen::Matrix<float,3,4> eigTcw1 = sophTcw1.matrix3x4();
     Eigen::Matrix<float,3,3> Rcw1 = eigTcw1.block<3,3>(0,0);
@@ -426,16 +443,19 @@ void LocalMapping::CreateNewMapPoints()
     const float &invfx1 = mpCurrentKeyFrame->invfx;
     const float &invfy1 = mpCurrentKeyFrame->invfy;
 
-    const float ratioFactor = 1.5f*mpCurrentKeyFrame->mfScaleFactor;
-    int countStereo = 0;
-    int countStereoGoodProj = 0;
-    int countStereoAttempt = 0;
-    int totalStereoPts = 0;
+    const float ratioFactor = 1.5f*mpCurrentKeyFrame->mfScaleFactor; // (ht) 1.5 * 1.2
+    // [0] = depth / stereo keypoint from KF1 (bStereo1), [1] = from KF2 (bStereo2)
+    int countStereo[2] = {0, 0};
+    int countStereoGoodProj[2] = {0, 0};
+    int countStereoAttempt[2] = {0, 0};
+    int totalStereoPts[2] = {0, 0};  // pairs with kp1 stereo / kp2 stereo (a pair can be in both)
+    int totalStereoBoth = 0;  // pairs with both kp1 and kp2 stereo
+    int nMatches = 0, nRejectedMono = 0, nRejectedStereo = 0, nCreated = 0;
     // Search matches with epipolar restriction and triangulate
-    for(size_t i=0; i<vpNeighKFs.size(); i++)
+    for(size_t i=0; i<vpNeighKFs.size(); i++) // (ht) loop over the neighbors
     {
-        if(i>0 && CheckNewKeyFrames())
-            return;
+        if(i>0 && CheckNewKeyFrames()) // the first one runs -- the second and third if there is something in queue -- it does not proceed
+            break;
 
         KeyFrame* pKF2 = vpNeighKFs[i];
 
@@ -449,9 +469,10 @@ void LocalMapping::CreateNewMapPoints()
         if(!mbMonocular)
         {
             if(baseline<pKF2->mb)
+            // (ht) stereo: skip if closer than the stereo baseline
                 continue;
         }
-        else
+        else // (ht) only in mono 
         {
             const float medianDepthKF2 = pKF2->ComputeSceneMedianDepth(2);
             const float ratioBaselineDepth = baseline/medianDepthKF2;
@@ -464,7 +485,11 @@ void LocalMapping::CreateNewMapPoints()
         vector<pair<size_t,size_t> > vMatchedIndices;
         bool bCoarse = mbInertial && mpTracker->mState==Tracking::RECENTLY_LOST && mpCurrentKeyFrame->GetMap()->GetIniertialBA2();
 
+        // (ht) match between the left-image keypoints of the two keyframes -- some checks on the Descriptor --  
+        // kp2 must lie within the 95% band around the epipolar line that kp1 and the relative pose define in KF2 (d² < 3.84·σ²).
+
         matcher.SearchForTriangulation(mpCurrentKeyFrame,pKF2,vMatchedIndices,false,bCoarse);
+        nMatches += vMatchedIndices.size();
 
         Sophus::SE3<float> sophTcw2 = pKF2->GetPose();
         Eigen::Matrix<float,3,4> eigTcw2 = sophTcw2.matrix3x4();
@@ -486,11 +511,12 @@ void LocalMapping::CreateNewMapPoints()
             const int &idx1 = vMatchedIndices[ikp].first;
             const int &idx2 = vMatchedIndices[ikp].second;
 
+            // (ht) getting keypoints from each keyframe 
             const cv::KeyPoint &kp1 = (mpCurrentKeyFrame -> NLeft == -1) ? mpCurrentKeyFrame->mvKeysUn[idx1]
                                                                          : (idx1 < mpCurrentKeyFrame -> NLeft) ? mpCurrentKeyFrame -> mvKeys[idx1]
                                                                                                                : mpCurrentKeyFrame -> mvKeysRight[idx1 - mpCurrentKeyFrame -> NLeft];
             const float kp1_ur=mpCurrentKeyFrame->mvuRight[idx1];
-            bool bStereo1 = (!mpCurrentKeyFrame->mpCamera2 && kp1_ur>=0);
+            bool bStereo1 = (!mpCurrentKeyFrame->mpCamera2 && kp1_ur>=0); // whether that kp has stereo or not 
             const bool bRight1 = (mpCurrentKeyFrame -> NLeft == -1 || idx1 < mpCurrentKeyFrame -> NLeft) ? false
                                                                                                          : true;
 
@@ -567,12 +593,15 @@ void LocalMapping::CreateNewMapPoints()
             float cosParallaxStereo1 = cosParallaxStereo;
             float cosParallaxStereo2 = cosParallaxStereo;
 
+            // (ht) i did not understand this part 
             if(bStereo1)
                 cosParallaxStereo1 = cos(2*atan2(mpCurrentKeyFrame->mb/2,mpCurrentKeyFrame->mvDepth[idx1]));
             else if(bStereo2)
                 cosParallaxStereo2 = cos(2*atan2(pKF2->mb/2,pKF2->mvDepth[idx2]));
 
-            if (bStereo1 || bStereo2) totalStereoPts++;
+            if (bStereo1) totalStereoPts[0]++;
+            if (bStereo2) totalStereoPts[1]++;
+            if (bStereo1 && bStereo2) totalStereoBoth++;
             
             cosParallaxStereo = min(cosParallaxStereo1,cosParallaxStereo2);
 
@@ -580,6 +609,9 @@ void LocalMapping::CreateNewMapPoints()
 
             bool goodProj = false;
             bool bPointStereo = false;
+            int iStereoSrc = -1;  // 0 = depth from KF1, 1 = depth from KF2
+
+            // (ht) how the point 3d component gets evaluated -- if its good and both have stereo -- triangulate -- otherwise use the depth from one image 
             if(cosParallaxRays<cosParallaxStereo && cosParallaxRays>0 && (bStereo1 || bStereo2 ||
                                                                           (cosParallaxRays<0.9996 && mbInertial) || (cosParallaxRays<0.9998 && !mbInertial)))
             {
@@ -589,13 +621,15 @@ void LocalMapping::CreateNewMapPoints()
             }
             else if(bStereo1 && cosParallaxStereo1<cosParallaxStereo2)
             {
-                countStereoAttempt++;
+                countStereoAttempt[0]++;
+                iStereoSrc = 0;
                 bPointStereo = true;
                 goodProj = mpCurrentKeyFrame->UnprojectStereo(idx1, x3D);
             }
             else if(bStereo2 && cosParallaxStereo2<cosParallaxStereo1)
             {
-                countStereoAttempt++;
+                countStereoAttempt[1]++;
+                iStereoSrc = 1;
                 bPointStereo = true;
                 goodProj = pKF2->UnprojectStereo(idx2, x3D);
             }
@@ -605,12 +639,14 @@ void LocalMapping::CreateNewMapPoints()
             }
 
             if(goodProj && bPointStereo)
-                countStereoGoodProj++;
+                countStereoGoodProj[iStereoSrc]++;
 
             if(!goodProj)
                 continue;
 
             //Check triangulation in front of cameras
+
+            // (ht) up until here -- every match has x3D
             float z1 = Rcw1.row(2).dot(x3D) + tcw1(2);
             if(z1<=0)
                 continue;
@@ -631,8 +667,13 @@ void LocalMapping::CreateNewMapPoints()
                 float errX1 = uv1.x - kp1.pt.x;
                 float errY1 = uv1.y - kp1.pt.y;
 
-                if((errX1*errX1+errY1*errY1)>5.991*sigmaSquare1)
-                    continue;
+                const Eigen::Vector2d e1(errX1, errY1);
+                if(msVanillaConfig.fixed_cov_triangulation ? e1.dot(FixedInformation(msVanillaConfig.fixed_cov_mono, kp1.octave) * e1) > (msVanillaConfig.huber_delta_mono * msVanillaConfig.huber_delta_mono)
+                                                           : (errX1*errX1+errY1*errY1)>5.991*sigmaSquare1)
+                    {
+                        nRejectedMono++;
+                        continue;
+                    }
 
             }
             else
@@ -643,8 +684,13 @@ void LocalMapping::CreateNewMapPoints()
                 float errX1 = u1 - kp1.pt.x;
                 float errY1 = v1 - kp1.pt.y;
                 float errX1_r = u1_r - kp1_ur;
-                if((errX1*errX1+errY1*errY1+errX1_r*errX1_r)>7.8*sigmaSquare1)
-                    continue;
+                const Eigen::Vector3d e1(errX1, errY1, errX1_r);
+                if(msVanillaConfig.fixed_cov_triangulation ? e1.dot(FixedInformation(msVanillaConfig.fixed_cov_stereo, kp1.octave) * e1) > (msVanillaConfig.huber_delta_stereo * msVanillaConfig.huber_delta_stereo)
+                                                           : (errX1*errX1+errY1*errY1+errX1_r*errX1_r)>7.8*sigmaSquare1)
+                    {
+                        nRejectedStereo++;
+                        continue;
+                    }
             }
 
             //Check reprojection error in second keyframe
@@ -657,8 +703,13 @@ void LocalMapping::CreateNewMapPoints()
                 cv::Point2f uv2 = pCamera2->project(cv::Point3f(x2,y2,z2));
                 float errX2 = uv2.x - kp2.pt.x;
                 float errY2 = uv2.y - kp2.pt.y;
-                if((errX2*errX2+errY2*errY2)>5.991*sigmaSquare2)
-                    continue;
+                const Eigen::Vector2d e2(errX2, errY2);
+                if(msVanillaConfig.fixed_cov_triangulation ? e2.dot(FixedInformation(msVanillaConfig.fixed_cov_mono, kp1.octave) * e2) > (msVanillaConfig.huber_delta_mono * msVanillaConfig.huber_delta_mono)
+                                                           : (errX2*errX2+errY2*errY2)>5.991*sigmaSquare2)
+                    {
+                        nRejectedMono++;
+                        continue;
+                    }
             }
             else
             {
@@ -668,8 +719,13 @@ void LocalMapping::CreateNewMapPoints()
                 float errX2 = u2 - kp2.pt.x;
                 float errY2 = v2 - kp2.pt.y;
                 float errX2_r = u2_r - kp2_ur;
-                if((errX2*errX2+errY2*errY2+errX2_r*errX2_r)>7.8*sigmaSquare2)
-                    continue;
+                const Eigen::Vector3d e2(errX2, errY2, errX2_r);
+                if(msVanillaConfig.fixed_cov_triangulation ? e2.dot(FixedInformation(msVanillaConfig.fixed_cov_stereo, kp1.octave) * e2) > (msVanillaConfig.huber_delta_stereo * msVanillaConfig.huber_delta_stereo)
+                                                           : (errX2*errX2+errY2*errY2+errX2_r*errX2_r)>7.8*sigmaSquare2)
+                    {
+                        nRejectedStereo++;
+                        continue;
+                    }
             }
 
             //Check scale consistency
@@ -694,7 +750,7 @@ void LocalMapping::CreateNewMapPoints()
             // Triangulation is succesfull
             MapPoint* pMP = new MapPoint(x3D, mpCurrentKeyFrame, mpAtlas->GetCurrentMap());
             if (bPointStereo)
-                countStereo++;
+                countStereo[iStereoSrc]++;
             
             pMP->AddObservation(mpCurrentKeyFrame,idx1);
             pMP->AddObservation(pKF2,idx2);
@@ -708,8 +764,17 @@ void LocalMapping::CreateNewMapPoints()
 
             mpAtlas->AddMapPoint(pMP);
             mlpRecentAddedMapPoints.push_back(pMP);
+            nCreated++;
         }
     }    
+    LOG(INFO) << "[GATES] triangulation kf=" << mpCurrentKeyFrame->mnId
+              << " matches=" << nMatches
+              << " reprojection=" << (msVanillaConfig.fixed_cov_triangulation ? "fixed" : "ORB")
+              << " rejected_mono=" << nRejectedMono << " rejected_stereo=" << nRejectedStereo << " created=" << nCreated
+              << " stereo1_pts=" << totalStereoPts[0] << " stereo2_pts=" << totalStereoPts[1] << " stereo_both_pts=" << totalStereoBoth
+              << " stereo1_attempt=" << countStereoAttempt[0] << " stereo2_attempt=" << countStereoAttempt[1]
+              << " stereo1_good_proj=" << countStereoGoodProj[0] << " stereo2_good_proj=" << countStereoGoodProj[1]
+              << " stereo1_created=" << countStereo[0] << " stereo2_created=" << countStereo[1];
 }
 
 void LocalMapping::SearchInNeighbors()
@@ -765,12 +830,13 @@ void LocalMapping::SearchInNeighbors()
 
     // Search matches by projection from current KF in target KFs
     ORBmatcher matcher;
+    int nFused = 0;
     vector<MapPoint*> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
     for(vector<KeyFrame*>::iterator vit=vpTargetKFs.begin(), vend=vpTargetKFs.end(); vit!=vend; vit++)
     {
         KeyFrame* pKFi = *vit;
 
-        matcher.Fuse(pKFi,vpMapPointMatches);
+        nFused += matcher.Fuse(pKFi,vpMapPointMatches);
         if(pKFi->NLeft != -1) matcher.Fuse(pKFi,vpMapPointMatches,true);
     }
 
@@ -800,9 +866,12 @@ void LocalMapping::SearchInNeighbors()
         }
     }
 
-    matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates);
+    nFused += matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates);
     if(mpCurrentKeyFrame->NLeft != -1) matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates,true);
 
+
+    LOG(INFO) << "[GATES] fuse kf=" << mpCurrentKeyFrame->mnId << " mode=" << (msVanillaConfig.fixed_cov_fuse ? "fixed" : "ORB")
+              << " gate_rejected=" << matcher.mnGateRejected << " fused=" << nFused;
 
     // Update points
     vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();

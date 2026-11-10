@@ -28,6 +28,7 @@
 #include "KannalaBrandt8.h"
 #include "MLPnPsolver.h"
 #include "GeometricTools.h"
+#include <glog/logging.h>
 
 #include <iostream>
 
@@ -1493,6 +1494,7 @@ Sophus::SE3f Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat 
 
     //cout << "Incoming frame creation" << endl;
 
+    // (ht) creates a Frame object
     if (mSensor == System::STEREO && !mpCamera2)
         mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera);
     else if(mSensor == System::STEREO && mpCamera2)
@@ -1955,7 +1957,10 @@ void Tracking::Track()
                     Verbose::PrintMess("TRACK: Track with motion model", Verbose::VERBOSITY_DEBUG);
                     bOK = TrackWithMotionModel();
                     if(!bOK)
+                    {
                         bOK = TrackReferenceKeyFrame();
+                        LOG(INFO) << "[MM] frame=" << mCurrentFrame.mnId << " motion_model_failed -> ref_kf " << (bOK ? "ok" : "failed");
+                    }
                 }
 
 
@@ -2387,7 +2392,7 @@ void Tracking::StereoInitialization()
                 {
                     Eigen::Vector3f x3D;
                     mCurrentFrame.UnprojectStereo(i, x3D);
-                    MapPoint* pNewMP = new MapPoint(x3D, pKFini, mpAtlas->GetCurrentMap());
+                    MapPoint* pNewMP = new MapPoint(x3D, pKFini, mpAtlas->GetCurrentMap()); //(ht) create a new mappoint object 
                     pNewMP->AddObservation(pKFini,i);
                     pKFini->AddMapPoint(pNewMP,i);
                     pNewMP->ComputeDistinctiveDescriptors();
@@ -2425,7 +2430,7 @@ void Tracking::StereoInitialization()
 
         //cout << "Active map: " << mpAtlas->GetCurrentMap()->GetId() << endl;
 
-        mpLocalMapper->InsertKeyFrame(pKFini);
+        mpLocalMapper->InsertKeyFrame(pKFini); // first entry to localmapper
 
         mLastFrame = Frame(mCurrentFrame);
         mnLastKeyFrameId = mCurrentFrame.mnId;
@@ -2896,6 +2901,7 @@ bool Tracking::TrackWithMotionModel()
 
         nmatches = matcher.SearchByProjection(mCurrentFrame,mLastFrame,2*th,mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR);
         Verbose::PrintMess("Matches with wider search: " + to_string(nmatches), Verbose::VERBOSITY_NORMAL);
+        LOG(INFO) << "[MM] frame=" << mCurrentFrame.mnId << " wider_search th=" << 2*th << " matches=" << nmatches;
 
     }
 
@@ -2913,12 +2919,14 @@ bool Tracking::TrackWithMotionModel()
 
     // Discard outliers
     int nmatchesMap = 0;
+    int outliers = 0;
     for(int i =0; i<mCurrentFrame.N; i++)
     {
         if(mCurrentFrame.mvpMapPoints[i])
         {
             if(mCurrentFrame.mvbOutlier[i])
             {
+                outliers++;
                 MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
 
                 mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);
@@ -2937,11 +2945,16 @@ bool Tracking::TrackWithMotionModel()
         }
     }
 
+    LOG(INFO) << "[PNP #1] nmatches : " << nmatches << " Outliers : " << outliers;
+
     if(mbOnlyTracking)
     {
         mbVO = nmatchesMap<10;
         return nmatches>20;
     }
+
+    if(nmatchesMap<10)
+        LOG(INFO) << "[MM] frame=" << mCurrentFrame.mnId << " few_inliers=" << nmatchesMap << " (of " << nmatches << " matches)";
 
     if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
         return true;
@@ -2970,7 +2983,7 @@ bool Tracking::TrackLocalMap()
         }
 
     int inliers;
-    if (!mpAtlas->isImuInitialized())
+    if (!mpAtlas->isImuInitialized()) // we take this branch 
         Optimizer::PoseOptimization(&mCurrentFrame);
     else
     {
@@ -3026,6 +3039,8 @@ bool Tracking::TrackLocalMap()
                 mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);
         }
     }
+
+    LOG(INFO) << "[PNP #2] frame " << mCurrentFrame.mnId <<"outliers: " << aux2 << "all :" << aux1;
 
     // Decide if the tracking was succesful
     // More restrictive if there was a relocalization recently
@@ -3163,6 +3178,10 @@ bool Tracking::NeedNewKeyFrame()
     const bool c1c = mSensor!=System::MONOCULAR && mSensor!=System::IMU_MONOCULAR && mSensor!=System::IMU_STEREO && mSensor!=System::IMU_RGBD && (mnMatchesInliers<nRefMatches*0.25 || bNeedToInsertClose) ;
     // Condition 2: Few tracked points compared to reference keyframe. Lots of visual odometry compared to map matches.
     const bool c2 = (((mnMatchesInliers<nRefMatches*thRefRatio || bNeedToInsertClose)) && mnMatchesInliers>15);
+    LOG(INFO) << "[NEED KF] frame=" << mCurrentFrame.mnId << " inliers=" << mnMatchesInliers << " ref_matches=" << nRefMatches
+              << " th_ref_ratio=" << thRefRatio << " tracked_close=" << nTrackedClose << " non_tracked_close=" << nNonTrackedClose
+              << " need_close=" << bNeedToInsertClose << " lm_idle=" << bLocalMappingIdle
+              << " c1a=" << c1a << " c1b=" << c1b << " c1c=" << c1c << " c2=" << c2;
 
     //std::cout << "NeedNewKF: c1a=" << c1a << "; c1b=" << c1b << "; c1c=" << c1c << "; c2=" << c2 << std::endl;
     // Temporal condition for Inertial cases
@@ -3425,6 +3444,8 @@ void Tracking::UpdateLocalMap()
     // Update
     UpdateLocalKeyFrames();
     UpdateLocalPoints();
+    LOG(INFO) << "[LOCAL MAP] frame=" << mCurrentFrame.mnId << " local_kfs=" << mvpLocalKeyFrames.size()
+              << " local_points=" << mvpLocalMapPoints.size() << " ref_kf=" << (mpReferenceKF ? (long)mpReferenceKF->mnId : -1L);
 }
 
 void Tracking::UpdateLocalPoints()
