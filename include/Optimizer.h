@@ -50,6 +50,7 @@ class Optimizer
 public:
 
     static bool mbLiveBAAutotune;
+    static bool mbFinalBAAutotune;  // autotune in the final full BA (System::Shutdown); true whenever autotune_config is given
     static cov_auto_tune::AutotunerConfig msLocalBAConfig; // (string) localBA config path 
     static cov_auto_tune::AutotunerConfig msFullBAConfig; // (string) FinalBA config path 
     static VanillaConfig msVanillaConfig;

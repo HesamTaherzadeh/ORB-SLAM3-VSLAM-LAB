@@ -54,6 +54,7 @@ bool sortByVal(const pair<MapPoint*, int> &a, const pair<MapPoint*, int> &b)
 }
 
 bool Optimizer::mbLiveBAAutotune = false;
+bool Optimizer::mbFinalBAAutotune = false;
 cov_auto_tune::AutotunerConfig Optimizer::msLocalBAConfig = cov_auto_tune::AutotunerConfig();
 cov_auto_tune::AutotunerConfig Optimizer::msFullBAConfig = cov_auto_tune::AutotunerConfig();
 

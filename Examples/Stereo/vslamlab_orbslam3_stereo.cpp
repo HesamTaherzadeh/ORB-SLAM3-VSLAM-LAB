@@ -226,14 +226,13 @@ int main(int argc, char **argv)
 
     const bool autotune_given = (autotune_config != "-");
     const bool vanilla_given = (vanilla_config != "-");
-    if (autotune_given == vanilla_given) {
-        LOG(FATAL) << "Exactly one of autotune_config or vanilla_config must be supplied ("
-                   << "autotune_config=" << autotune_config
-                   << ", vanilla_config=" << vanilla_config << ")";
+    if (!autotune_given && !vanilla_given) {
+        LOG(FATAL) << "At least one of autotune_config or vanilla_config must be supplied";
     }
 
     if (autotune_given) {
-        ORB_SLAM3::Optimizer::mbLiveBAAutotune = true;
+        ORB_SLAM3::Optimizer::mbLiveBAAutotune = !vanilla_given;
+        ORB_SLAM3::Optimizer::mbFinalBAAutotune = true;
         try {
             ORB_SLAM3::Optimizer::msLocalBAConfig = cov_auto_tune::configFromYamlFile(autotune_config);
             std::cout << "[AUTOTUNE CONFIG] loaded from " << autotune_config;
@@ -242,7 +241,8 @@ int main(int argc, char **argv)
         } catch (const std::exception& e) {
             LOG(FATAL) << "Failed to load autotune config '" << autotune_config << "': " << e.what();
         }
-    } else {
+    }
+    if (vanilla_given) {
         try {
             // Path to sequence = /home/hesam/Autotune-studio/VSLAM-LAB-Benchmark/KITTI/04 the last will become '04'
             ORB_SLAM3::Optimizer::msVanillaConfig = LoadVanillaConfig(vanilla_config, sequence_path.substr(sequence_path.find_last_of('/') + 1)); 
@@ -251,6 +251,28 @@ int main(int argc, char **argv)
         } catch (const std::exception& e) {
             LOG(FATAL) << "Failed to load vanilla config '" << vanilla_config << "': " << e.what();
         }
+    }
+
+    {
+        const ORB_SLAM3::VanillaConfig& v = ORB_SLAM3::Optimizer::msVanillaConfig;
+        const bool live = ORB_SLAM3::Optimizer::mbLiveBAAutotune;
+        const bool fin = ORB_SLAM3::Optimizer::mbFinalBAAutotune;
+        const char* pnp = (!live && v.fixed_cov_pose_optimization) ? "autotune-fix" : "ORB";                                     // Optimizer::PoseOptimization
+        const char* lba = live ? "autotune" : (v.fixed_cov_every_ba ? "autotune-fix" : "ORB");                                  // Optimizer::LocalBundleAdjustment
+        const char* gba = (v.fixed_cov_final_ba && (v.fixed_cov_every_ba || v.fixed_cov_every_full_ba)) ? "autotune-fix" : "ORB"; // loop-closure GBA (BundleAdjustment, bRobust=false)
+        const char* fba = fin ? "autotune" : (v.fixed_cov_final_ba ? "autotune-fix" : "ORB");                                   // final GBA in System::Shutdown
+        const std::string given = autotune_given ? (vanilla_given ? "autotune+vanilla" : "autotune") : "vanilla";
+        const std::vector<std::string> rows = {
+            "[MODES] given=" + given + " mbLiveBAAutotune=" + std::to_string(live) + " mbFinalBAAutotune=" + std::to_string(fin),
+            std::string("[MODES]   pnp (pose only) : ") + pnp,
+            std::string("[MODES]   local BA        : ") + lba,
+            std::string("[MODES]   loop GBA        : ") + gba + (loop_closing ? "" : "  (loop closing off)"),
+            std::string("[MODES]   final GBA       : ") + fba};
+        for (const std::string& row : rows) {
+            LOG(INFO) << row;
+            std::cout << row << "\n";
+        }
+        std::cout << std::flush;
     }
 #ifdef PRINT_CONFIG_ONLY
     return 1;
@@ -317,7 +339,7 @@ int main(int argc, char **argv)
     // Stop all threads
     SLAM.Shutdown();
 
-    if (ORB_SLAM3::Optimizer::mbLiveBAAutotune) {
+    if (ORB_SLAM3::Optimizer::mbFinalBAAutotune) {
         ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_autotune.json");
     } else {
         ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_vanilla.json");

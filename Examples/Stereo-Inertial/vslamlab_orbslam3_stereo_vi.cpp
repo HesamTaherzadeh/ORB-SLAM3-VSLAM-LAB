@@ -219,6 +219,7 @@ int main(int argc, char *argv[])
 
     if (autotune_given) {
         ORB_SLAM3::Optimizer::mbLiveBAAutotune = true;
+        ORB_SLAM3::Optimizer::mbFinalBAAutotune = true;
         try {
             ORB_SLAM3::Optimizer::msLocalBAConfig = cov_auto_tune::configFromYamlFile(autotune_config);
         } catch (const std::exception& e) {

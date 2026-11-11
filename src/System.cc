@@ -554,7 +554,7 @@ void System::Shutdown()
     while(!mpLocalMapper->isFinished() || !mpLoopCloser->isFinished() || mpLoopCloser->isRunningGBA())   // a loop-closure GBA runs in its own thread
         usleep(5000); // 5 milliseconds 
 
-    if(Optimizer::mbLiveBAAutotune)
+    if(Optimizer::mbFinalBAAutotune)
     {
         Map* pMap = mpAtlas->GetCurrentMap();
         if(pMap && pMap->KeyFramesInMap() > 0)
