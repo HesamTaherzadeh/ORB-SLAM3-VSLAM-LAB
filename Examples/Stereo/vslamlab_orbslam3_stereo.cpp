@@ -41,87 +41,6 @@ void removeSubstring(std::string& str, const std::string& substring) {
 }
 
 
-namespace
-{
-template<typename T>
-void ReadIfPresent(const YAML::Node& node, const std::string& name, T& value)
-{
-    if(node[name])  
-        value = node[name].as<T>(); 
-}
-
-// reads the 8 mono (2x2) and 8 stereo (3x3) covariances of fixedCovPath ({sequence} is replaced) into config.fixed_cov_*
-void LoadFixedCov(std::string fixedCovPath, const std::string& sequence, ORB_SLAM3::VanillaConfig& config)
-{
-    const size_t at = fixedCovPath.find("{sequence}");
-    if(at != std::string::npos)
-        fixedCovPath.replace(at, 10, sequence);
-    const YAML::Node cov = YAML::LoadFile(fixedCovPath);
-    if(cov["mono"].size() != 8 || cov["stereo"].size() != 8)
-        throw std::runtime_error("LoadFixedCov: " + fixedCovPath + " needs 8 mono and 8 stereo entries");
-    for(int o = 0; o < 8; ++o) // 8 octaves
-    {
-        const std::vector<double> m = cov["mono"][o].as<std::vector<double>>();
-        const std::vector<double> s = cov["stereo"][o].as<std::vector<double>>();
-        if(m.size() != 4 || s.size() != 9)
-            throw std::runtime_error("LoadFixedCov: octave " + std::to_string(o) + " needs 4 mono and 9 stereo values in " + fixedCovPath);
-        config.fixed_cov_mono[o] = Eigen::Map<const Eigen::Matrix<double, 2, 2, Eigen::RowMajor>>(m.data());
-        config.fixed_cov_stereo[o] = Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(s.data());
-        LOG(INFO) << "[FIXED COV] octave=" << o << "\nmono cov=\n" << config.fixed_cov_mono[o] << "\nstereo cov=\n" << config.fixed_cov_stereo[o];
-    }
-    LOG(INFO) << "[FIXED COV] fixed_cov_path=" << fixedCovPath;
-}
-
-ORB_SLAM3::VanillaConfig LoadVanillaConfig(const std::string& path, const std::string& sequence)
-{
-    if(!std::ifstream(path).good())
-        throw std::runtime_error("LoadVanillaConfig: could not open " + path);
-
-    const YAML::Node root = YAML::LoadFile(path);
-
-    ORB_SLAM3::VanillaConfig config;
-
-    const YAML::Node node = root["vanilla"] ? root["vanilla"] : root;
-
-    ReadIfPresent(node, "stop_criteria_threshold", config.stop_criteria_threshold);
-    ReadIfPresent(node, "num_iterations", config.num_iterations);
-    ReadIfPresent(node, "remove_mono", config.remove_mono);
-    ReadIfPresent(node, "disable_huber", config.disable_huber);
-    ReadIfPresent(node, "fixed_cov_final_ba", config.fixed_cov_final_ba);
-    ReadIfPresent(node, "fixed_cov_every_ba", config.fixed_cov_every_ba);
-    ReadIfPresent(node, "fixed_cov_every_full_ba", config.fixed_cov_every_full_ba);
-    ReadIfPresent(node, "fixed_cov_pose_optimization", config.fixed_cov_pose_optimization);
-    ReadIfPresent(node, "fixed_cov_triangulation", config.fixed_cov_triangulation);
-    ReadIfPresent(node, "fixed_cov_fuse", config.fixed_cov_fuse);
-    ReadIfPresent(node, "fixed_cov_epipolar", config.fixed_cov_epipolar);
-    ReadIfPresent(node, "epipolar_chi2", config.epipolar_chi2);
-    ReadIfPresent(node, "huber_delta_mono", config.huber_delta_mono);
-    ReadIfPresent(node, "huber_delta_stereo", config.huber_delta_stereo);
-    ReadIfPresent(node, "fixed_cov_epipolar", config.fixed_cov_epipolar);
-    std::string fixedCovPath;  // path  for the covariance yamls
-    ReadIfPresent(node, "fixed_cov_path", fixedCovPath);
-    if(config.fixed_cov_final_ba || config.fixed_cov_every_ba || config.fixed_cov_every_full_ba || config.fixed_cov_pose_optimization || config.fixed_cov_triangulation || config.fixed_cov_fuse || config.fixed_cov_epipolar)  // if we had fixed covariances -- read them from yaml
-        LoadFixedCov(fixedCovPath, sequence, config);
-
-    LOG(INFO) << "[VANILLA CONFIG] loaded from " << path;
-    LOG(INFO) << "[VANILLA CONFIG] stop_criteria_threshold=" << config.stop_criteria_threshold
-              << " num_iterations=" << config.num_iterations
-              << " remove_mono=" << config.remove_mono
-              << " disable_huber=" << config.disable_huber
-              << " fixed_cov_final_ba=" << config.fixed_cov_final_ba
-              << " fixed_cov_every_ba=" << config.fixed_cov_every_ba
-              << " fixed_cov_every_full_ba=" << config.fixed_cov_every_full_ba
-              << " fixed_cov_pose_optimization=" << config.fixed_cov_pose_optimization
-              << " fixed_cov_triangulation=" << config.fixed_cov_triangulation
-              << " fixed_cov_fuse=" << config.fixed_cov_fuse
-              << " fixed_cov_epipolar=" << config.fixed_cov_epipolar
-              << " epipolar_chi2=" << config.epipolar_chi2
-              << " huber_delta_mono=" << config.huber_delta_mono
-              << " huber_delta_stereo=" << config.huber_delta_stereo;
-
-    return config;
-}
-} // namespace
 
 int main(int argc, char **argv)
 {
@@ -134,8 +53,7 @@ int main(int argc, char **argv)
     string exp_id{"0"};
     string settings_yaml{"orbslam2_settings.yaml"};
     bool verbose{true};
-    string autotune_config{"-"};
-    string vanilla_config{"-"};
+    string run_config{"-"};       // one yaml: cov: (mode of every stage), vanilla:, autotune:, solver:
     bool loop_closing{true};
     double playback_speed{1.0};
 
@@ -190,10 +108,10 @@ int main(int argc, char **argv)
             LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to vocabulary = " << vocabulary;
             continue;
         }
-        if (arg.find("autotune_config:") != std::string::npos) {
-            removeSubstring(arg, "autotune_config:");
-            autotune_config = arg;
-            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to autotune_config = " << autotune_config;
+        if (arg.find("run_config:") != std::string::npos) {
+            removeSubstring(arg, "run_config:");
+            run_config = arg;
+            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to run_config = " << run_config;
             continue;
         }
         if (arg.find("loop_closing:") != std::string::npos) {
@@ -206,12 +124,6 @@ int main(int argc, char **argv)
             removeSubstring(arg, "playback_speed:");
             playback_speed = std::stod(arg);
             LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] playback_speed = " << playback_speed;
-            continue;
-        }
-        if (arg.find("vanilla_config:") != std::string::npos) {
-            removeSubstring(arg, "vanilla_config:");
-            vanilla_config = arg;
-            LOG(INFO) << "[vslamlab_orbslam3_stereo.cpp] Path to vanilla_config = " << vanilla_config;
             continue;
         }
     }
@@ -229,76 +141,37 @@ int main(int argc, char **argv)
 
     ORB_SLAM3::System::mbLoopClosingEnabled = loop_closing;
 
-    const bool autotune_given = (autotune_config != "-");
-    const bool vanilla_given = (vanilla_config != "-");
-    if (!autotune_given && !vanilla_given) {
-        LOG(FATAL) << "At least one of autotune_config or vanilla_config must be supplied";
-    }
+    if (run_config == "-")
+        LOG(FATAL) << "run_config must be supplied";
 
-    if (vanilla_given) {    // first: it assigns the whole msVanillaConfig, so the autotune fixed_cov below must come after it
-        try {
-            // Path to sequence = /home/hesam/Autotune-studio/VSLAM-LAB-Benchmark/KITTI/04 the last will become '04'
-            ORB_SLAM3::Optimizer::msVanillaConfig = LoadVanillaConfig(vanilla_config, sequence_path.substr(sequence_path.find_last_of('/') + 1));
-            ORB_SLAM3::LocalMapping::msVanillaConfig = LoadVanillaConfig(vanilla_config, sequence_path.substr(sequence_path.find_last_of('/') + 1));
-
-        } catch (const std::exception& e) {
-            LOG(FATAL) << "Failed to load vanilla config '" << vanilla_config << "': " << e.what();
-        }
-    }
-    if (autotune_given) {
-        ORB_SLAM3::Optimizer::mbLiveBAAutotune = !vanilla_given;
-        ORB_SLAM3::Optimizer::mbFinalBAAutotune = true;
-        try {
-            ORB_SLAM3::Optimizer::msLocalBAConfig = cov_auto_tune::configFromYamlFile(autotune_config);
-            std::cout << "[AUTOTUNE CONFIG] loaded from " << autotune_config;
-            ORB_SLAM3::Optimizer::msLocalBAConfig.print(std::cout);
-            std::cout << std::flush;
-
-            // fixed_cov: 1 -> every stage autotune does not tune uses the covariance of fixed_cov_path, 0 / absent -> ORB model
-            const YAML::Node root = YAML::LoadFile(autotune_config);
-            const YAML::Node node = root["autotune"] ? root["autotune"] : root;
-            if (node["fixed_cov"] && node["fixed_cov"].as<int>()) {
-                const std::string sequence = sequence_path.substr(sequence_path.find_last_of('/') + 1);
-                ORB_SLAM3::Optimizer::mbAutotuneFixedCov = true;
-                LoadFixedCov(node["fixed_cov_path"].as<std::string>(), sequence, ORB_SLAM3::Optimizer::msVanillaConfig);
-                LoadFixedCov(node["fixed_cov_path"].as<std::string>(), sequence, ORB_SLAM3::LocalMapping::msVanillaConfig);
-            }
-            LOG(INFO) << "[AUTOTUNE CONFIG] fixed_cov=" << ORB_SLAM3::Optimizer::mbAutotuneFixedCov
-                      << " (stages autotune does not tune use " << (ORB_SLAM3::Optimizer::mbAutotuneFixedCov ? "the fixed_cov_path covariance" : "the ORB model") << ")"
-                      << " huber_delta_mono=" << ORB_SLAM3::Optimizer::msVanillaConfig.huber_delta_mono
-                      << " huber_delta_stereo=" << ORB_SLAM3::Optimizer::msVanillaConfig.huber_delta_stereo
-                      << " epipolar_chi2=" << ORB_SLAM3::Optimizer::msVanillaConfig.epipolar_chi2;
-        } catch (const std::exception& e) {
-            LOG(FATAL) << "Failed to load autotune config '" << autotune_config << "': " << e.what();
-        }
-    }
-
-    {
+    try {
+        // Path to sequence = /home/hesam/Autotune-studio/VSLAM-LAB-Benchmark/KITTI/04 the last will become '04'
+        const std::string sequence = sequence_path.substr(sequence_path.find_last_of('/') + 1);
+        ORB_SLAM3::Optimizer::msVanillaConfig = cov_auto_tune::vanillaConfigFromYamlFile(run_config, sequence);
+        ORB_SLAM3::LocalMapping::msVanillaConfig = ORB_SLAM3::Optimizer::msVanillaConfig;
         const ORB_SLAM3::VanillaConfig& v = ORB_SLAM3::Optimizer::msVanillaConfig;
-        const bool live = ORB_SLAM3::Optimizer::mbLiveBAAutotune;
-        const bool fin = ORB_SLAM3::Optimizer::mbFinalBAAutotune;
-        const char* pnp = ((!live && v.fixed_cov_pose_optimization) || ORB_SLAM3::Optimizer::mbAutotuneFixedCov) ? "autotune-fix" : "ORB";                                     // Optimizer::PoseOptimization
-        const char* lba = live ? "autotune" : ((v.fixed_cov_every_ba || ORB_SLAM3::Optimizer::mbAutotuneFixedCov) ? "autotune-fix" : "ORB");                                  // Optimizer::LocalBundleAdjustment
-        const char* gba = ((v.fixed_cov_final_ba && (v.fixed_cov_every_ba || v.fixed_cov_every_full_ba)) || ORB_SLAM3::Optimizer::mbAutotuneFixedCov) ? "autotune-fix" : "ORB"; // loop-closure GBA (BundleAdjustment, bRobust=false)
-        const char* fba = fin ? "autotune" : (v.fixed_cov_final_ba ? "autotune-fix" : "ORB");                                   // final GBA in System::Shutdown
-        const bool fixAll = ORB_SLAM3::Optimizer::mbAutotuneFixedCov;
-        const std::string gates = std::string("epipolar ") + ((v.fixed_cov_epipolar || fixAll) ? "fixed" : "ORB")                // Pinhole::epipolarConstrain
-                                  + ", triangulation " + ((v.fixed_cov_triangulation || fixAll) ? "fixed" : "ORB")               // LocalMapping::CreateNewMapPoints
-                                  + ", fuse " + ((v.fixed_cov_fuse || fixAll) ? "fixed" : "ORB");                                 // ORBmatcher::Fuse
-        const std::string given = autotune_given ? (vanilla_given ? "autotune+vanilla" : "autotune") : "vanilla";
-        const std::vector<std::string> rows = {
-            "[MODES] given=" + given + " mbLiveBAAutotune=" + std::to_string(live) + " mbFinalBAAutotune=" + std::to_string(fin)
-                + " mbAutotuneFixedCov=" + std::to_string(fixAll),
-            std::string("[MODES]   pnp (pose only) : ") + pnp,
-            std::string("[MODES]   gates           : ") + gates,
-            std::string("[MODES]   local BA        : ") + lba,
-            std::string("[MODES]   loop GBA        : ") + gba + (loop_closing ? "" : "  (loop closing off)"),
-            std::string("[MODES]   final GBA       : ") + fba};
-        for (const std::string& row : rows) {
-            LOG(INFO) << row;
-            std::cout << row << "\n";
+        ORB_SLAM3::Optimizer::mbLiveBAAutotune = (v.cov_local_ba == ORB_SLAM3::CovMode::Autotune);
+        ORB_SLAM3::Optimizer::mbFinalBAAutotune = (v.cov_final_ba == ORB_SLAM3::CovMode::Autotune);
+        if (v.anyAutotune())
+            ORB_SLAM3::Optimizer::msLocalBAConfig = cov_auto_tune::configFromYamlFile(run_config);
+    } catch (const std::exception& e) {
+        LOG(FATAL) << "Failed to load run_config '" << run_config << "': " << e.what();
+    }
+
+    {   // what every stage uses: printed to stdout and the glog
+        const ORB_SLAM3::VanillaConfig& v = ORB_SLAM3::Optimizer::msVanillaConfig;
+        std::ostringstream modes;
+        modes << "[MODES] run_config=" << run_config << " mbLiveBAAutotune=" << ORB_SLAM3::Optimizer::mbLiveBAAutotune
+              << " mbFinalBAAutotune=" << ORB_SLAM3::Optimizer::mbFinalBAAutotune << (loop_closing ? "" : " (loop closing off: no gba)") << "\n";
+        v.print(modes);
+        if (v.anyAutotune()) {
+            modes << "[MODES] autotune settings (autotuned BAs):\n";
+            ORB_SLAM3::Optimizer::msLocalBAConfig.print(modes);
         }
-        std::cout << std::flush;
+        for (int o = 0; o < 8 && v.anyFixed(); ++o)
+            modes << "[FIXED COV] octave=" << o << "\nmono cov=\n" << v.fixed_cov_mono[o] << "\nstereo cov=\n" << v.fixed_cov_stereo[o] << "\n";
+        LOG(INFO) << modes.str();
+        std::cout << modes.str() << std::flush;
     }
 #ifdef PRINT_CONFIG_ONLY
     return 1;
@@ -365,7 +238,7 @@ int main(int argc, char **argv)
     // Stop all threads
     SLAM.Shutdown();
 
-    if (ORB_SLAM3::Optimizer::mbFinalBAAutotune) {
+    if (ORB_SLAM3::Optimizer::msVanillaConfig.anyAutotune()) {
         ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_autotune.json");
     } else {
         ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_vanilla.json");

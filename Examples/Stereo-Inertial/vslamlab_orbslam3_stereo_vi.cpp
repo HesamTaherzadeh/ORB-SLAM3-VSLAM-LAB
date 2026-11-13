@@ -39,73 +39,6 @@ void removeSubstring(std::string& str, const std::string& substring) {
 void LoadIMU(const string &strImuPath, vector<double> &vTimeStamps, vector<cv::Point3f> &vAcc, vector<cv::Point3f> &vGyro);
 
 
-namespace
-{
-template<typename T>
-void ReadIfPresent(const YAML::Node& node, const std::string& name, T& value)
-{
-    if(node[name])  
-        value = node[name].as<T>(); 
-}
-
-ORB_SLAM3::VanillaConfig LoadVanillaConfig(const std::string& path, const std::string& sequence)
-{
-    if(!std::ifstream(path).good())
-        throw std::runtime_error("LoadVanillaConfig: could not open " + path);
-
-    const YAML::Node root = YAML::LoadFile(path);
-
-    ORB_SLAM3::VanillaConfig config;
-
-    const YAML::Node node = root["vanilla"] ? root["vanilla"] : root;
-
-    ReadIfPresent(node, "stop_criteria_threshold", config.stop_criteria_threshold);
-    ReadIfPresent(node, "num_iterations", config.num_iterations);
-    ReadIfPresent(node, "remove_mono", config.remove_mono);
-    ReadIfPresent(node, "disable_huber", config.disable_huber);
-    ReadIfPresent(node, "fixed_cov_final_ba", config.fixed_cov_final_ba);
-    ReadIfPresent(node, "fixed_cov_every_ba", config.fixed_cov_every_ba);
-    ReadIfPresent(node, "fixed_cov_every_full_ba", config.fixed_cov_every_full_ba);
-    ReadIfPresent(node, "fixed_cov_pose_optimization", config.fixed_cov_pose_optimization);
-    ReadIfPresent(node, "huber_delta_mono", config.huber_delta_mono);
-    ReadIfPresent(node, "huber_delta_stereo", config.huber_delta_stereo);
-    std::string fixedCovPath;  // path  for the covariance yamls 
-    ReadIfPresent(node, "fixed_cov_path", fixedCovPath);
-    if(config.fixed_cov_final_ba || config.fixed_cov_every_ba || config.fixed_cov_every_full_ba || config.fixed_cov_pose_optimization)  // if we had fixed covariances -- read them from yaml 
-    {
-        const size_t at = fixedCovPath.find("{sequence}");
-        if(at != std::string::npos)
-            fixedCovPath.replace(at, 10, sequence);
-        const YAML::Node cov = YAML::LoadFile(fixedCovPath);
-        if(cov["mono"].size() != 8 || cov["stereo"].size() != 8)
-            throw std::runtime_error("LoadVanillaConfig: " + fixedCovPath + " needs 8 mono and 8 stereo entries");
-        for(int o = 0; o < 8; ++o)
-        {
-            const std::vector<double> m = cov["mono"][o].as<std::vector<double>>();
-            const std::vector<double> s = cov["stereo"][o].as<std::vector<double>>();
-            if(m.size() != 4 || s.size() != 9)
-                throw std::runtime_error("LoadVanillaConfig: octave " + std::to_string(o) + " needs 4 mono and 9 stereo values in " + fixedCovPath);
-            config.fixed_cov_mono[o] = Eigen::Map<const Eigen::Matrix<double, 2, 2, Eigen::RowMajor>>(m.data());
-            config.fixed_cov_stereo[o] = Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(s.data());
-        }
-        LOG(INFO) << "[VANILLA CONFIG] fixed_cov_path=" << fixedCovPath;
-    }
-
-    LOG(INFO) << "[VANILLA CONFIG] loaded from " << path;
-    LOG(INFO) << "[VANILLA CONFIG] stop_criteria_threshold=" << config.stop_criteria_threshold
-              << " num_iterations=" << config.num_iterations
-              << " remove_mono=" << config.remove_mono
-              << " disable_huber=" << config.disable_huber
-              << " fixed_cov_final_ba=" << config.fixed_cov_final_ba
-              << " fixed_cov_every_ba=" << config.fixed_cov_every_ba
-              << " fixed_cov_every_full_ba=" << config.fixed_cov_every_full_ba
-              << " fixed_cov_pose_optimization=" << config.fixed_cov_pose_optimization
-              << " huber_delta_mono=" << config.huber_delta_mono
-              << " huber_delta_stereo=" << config.huber_delta_stereo;
-
-    return config;
-}
-} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -122,8 +55,7 @@ int main(int argc, char *argv[])
     bool verbose{true};
 
     string vocabulary{"Vocabulary/ORBvoc.txt"};
-    string autotune_config{"-"};
-    string vanilla_config{"-"};
+    string run_config{"-"};       // one yaml: cov: (mode of every stage), vanilla:, autotune:, solver:
     bool loop_closing{true};
     double playback_speed{1.0};
     cout << endl;
@@ -177,10 +109,10 @@ int main(int argc, char *argv[])
             std::cout << "[vslamlab_orbslam3_stereo_vi.cpp] Path to vocabulary = " << vocabulary << std::endl;
             continue;
         }
-        if (arg.find("autotune_config:") != std::string::npos) {
-            removeSubstring(arg, "autotune_config:");
-            autotune_config = arg;
-            std::cout << "[vslamlab_orbslam3_stereo_vi.cpp] Path to autotune_config = " << autotune_config << std::endl;
+        if (arg.find("run_config:") != std::string::npos) {
+            removeSubstring(arg, "run_config:");
+            run_config = arg;
+            std::cout << "[vslamlab_orbslam3_stereo_vi.cpp] Path to run_config = " << run_config << std::endl;
             continue;
         }
         if (arg.find("loop_closing:") != std::string::npos) {
@@ -195,12 +127,6 @@ int main(int argc, char *argv[])
             std::cout << "[vslamlab_orbslam3_stereo_vi.cpp] playback_speed = " << playback_speed << std::endl;
             continue;
         }
-        if (arg.find("vanilla_config:") != std::string::npos) {
-            removeSubstring(arg, "vanilla_config:");
-            vanilla_config = arg;
-            std::cout << "[vslamlab_orbslam3_stereo_vi.cpp] Path to vanilla_config = " << vanilla_config << std::endl;
-            continue;
-        }
     }
 
     google::InitGoogleLogging(argv[0]);
@@ -209,28 +135,20 @@ int main(int argc, char *argv[])
 
     ORB_SLAM3::System::mbLoopClosingEnabled = loop_closing;
 
-    const bool autotune_given = (autotune_config != "-");
-    const bool vanilla_given = (vanilla_config != "-");
-    if (autotune_given == vanilla_given) {
-        LOG(FATAL) << "Exactly one of autotune_config or vanilla_config must be supplied ("
-                   << "autotune_config=" << autotune_config
-                   << ", vanilla_config=" << vanilla_config << ")";
-    }
-
-    if (autotune_given) {
-        ORB_SLAM3::Optimizer::mbLiveBAAutotune = true;
-        ORB_SLAM3::Optimizer::mbFinalBAAutotune = true;
-        try {
-            ORB_SLAM3::Optimizer::msLocalBAConfig = cov_auto_tune::configFromYamlFile(autotune_config);
-        } catch (const std::exception& e) {
-            LOG(FATAL) << "Failed to load autotune config '" << autotune_config << "': " << e.what();
-        }
-    } else {
-        try {
-            ORB_SLAM3::Optimizer::msVanillaConfig = LoadVanillaConfig(vanilla_config, sequence_path.substr(sequence_path.find_last_of('/') + 1));
-        } catch (const std::exception& e) {
-            LOG(FATAL) << "Failed to load vanilla config '" << vanilla_config << "': " << e.what();
-        }
+    if (run_config == "-")
+        LOG(FATAL) << "run_config must be supplied";
+    try {
+        const std::string sequence = sequence_path.substr(sequence_path.find_last_of('/') + 1);
+        ORB_SLAM3::Optimizer::msVanillaConfig = cov_auto_tune::vanillaConfigFromYamlFile(run_config, sequence);
+        ORB_SLAM3::LocalMapping::msVanillaConfig = ORB_SLAM3::Optimizer::msVanillaConfig;
+        const ORB_SLAM3::VanillaConfig& v = ORB_SLAM3::Optimizer::msVanillaConfig;
+        ORB_SLAM3::Optimizer::mbLiveBAAutotune = (v.cov_local_ba == ORB_SLAM3::CovMode::Autotune);
+        ORB_SLAM3::Optimizer::mbFinalBAAutotune = (v.cov_final_ba == ORB_SLAM3::CovMode::Autotune);
+        if (v.anyAutotune())
+            ORB_SLAM3::Optimizer::msLocalBAConfig = cov_auto_tune::configFromYamlFile(run_config);
+        v.print(std::cout);
+    } catch (const std::exception& e) {
+        LOG(FATAL) << "Failed to load run_config '" << run_config << "': " << e.what();
     }
 
     // Retrieve paths to images
@@ -312,7 +230,7 @@ int main(int argc, char *argv[])
     // Stop all threads
     SLAM.Shutdown();
 
-    if (ORB_SLAM3::Optimizer::mbLiveBAAutotune) {
+    if (ORB_SLAM3::Optimizer::msVanillaConfig.anyAutotune()) {
         ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_autotune.json");
     }
 

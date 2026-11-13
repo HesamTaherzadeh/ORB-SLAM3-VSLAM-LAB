@@ -51,7 +51,6 @@ public:
 
     static bool mbLiveBAAutotune;
     static bool mbFinalBAAutotune;  // autotune in the final full BA (System::Shutdown); true whenever autotune_config is given
-    static bool mbAutotuneFixedCov;  // autotune yaml fixed_cov: 1 -> every stage autotune does not tune uses the Σ of fixed_cov_path (msVanillaConfig.fixed_cov_*)
     static cov_auto_tune::AutotunerConfig msLocalBAConfig; // (string) localBA config path 
     static cov_auto_tune::AutotunerConfig msFullBAConfig; // (string) FinalBA config path 
     static VanillaConfig msVanillaConfig;

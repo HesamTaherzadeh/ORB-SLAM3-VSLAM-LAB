@@ -55,7 +55,6 @@ bool sortByVal(const pair<MapPoint*, int> &a, const pair<MapPoint*, int> &b)
 
 bool Optimizer::mbLiveBAAutotune = false;
 bool Optimizer::mbFinalBAAutotune = false;
-bool Optimizer::mbAutotuneFixedCov = false;
 cov_auto_tune::AutotunerConfig Optimizer::msLocalBAConfig = cov_auto_tune::AutotunerConfig();
 cov_auto_tune::AutotunerConfig Optimizer::msFullBAConfig = cov_auto_tune::AutotunerConfig();
 
@@ -180,10 +179,14 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
     const bool disableHuber = bAutotune ? Optimizer::msLocalBAConfig.disable_huber : Optimizer::msVanillaConfig.disable_huber;
     const bool robust = bRobust && !disableHuber;  // only the final one will have the disable huber -- if bRobust is false (no robust -- orb model)
     const VanillaConfig& vanilla = Optimizer::msVanillaConfig; 
-    const bool isFinalBA = bRobust;   
-    const bool fixThisFullBA = isFinalBA || vanilla.fixed_cov_every_ba || vanilla.fixed_cov_every_full_ba;  // see d5.md
-    const bool fixedCovariance = !bAutotune && ((vanilla.fixed_cov_final_ba && fixThisFullBA) || Optimizer::mbAutotuneFixedCov);  
-    LOG(INFO) << "[Optimizer.cc] full BA " << (bAutotune ? "autotune" : "vanilla")
+    const bool isFinalBA = bRobust;
+    const CovMode mode = isFinalBA ? vanilla.cov_final_ba : vanilla.cov_gba;  // the caller passes bAutotune when that mode is autotune
+    const bool fixedCovariance = !bAutotune && mode == CovMode::Fixed;
+    const char* ranAs = bAutotune ? "autotune" : (fixedCovariance ? "fixed" : "orb");  // what actually runs
+    if(isFinalBA) { LOG_FIRST_N(INFO, 1) << "[Final BA] mode : " << ranAs; }   // braces: LOG_FIRST_N is several statements
+    else          { LOG_FIRST_N(INFO, 1) << "[GBA] mode : " << ranAs; }
+    LOG(INFO) << "[Optimizer.cc] full BA " << (isFinalBA ? "final" : "gba") << " " << (bAutotune ? "autotune" : "vanilla")
+              << " cov=" << cov_auto_tune::covModeName(mode)
               << " disable_huber=" << disableHuber << " robust=" << robust << " fixed=" << fixedCovariance;
     if(!bAutotune)  
         LOG(INFO) << "[COV] " << (bRobust ? "final BA" : "loop GBA") << ": " << (fixedCovariance ? "fixed" : "ORB");
@@ -343,7 +346,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
 
     if(fixedCovariance)
     {
-        const char* where = bRobust ? "final full BA" : (vanilla.fixed_cov_every_full_ba ? "full BA (fixed_cov_every_full_ba)" : "full BA (fixed_cov_every_ba)");
+        const char* where = bRobust ? "final full BA (cov final_ba: fixed)" : "gba (cov gba: fixed)";
         LogFixedEdges(vpEdgesMono, vnOctaveMono, "mono", where);
         LogFixedEdges(vpEdgesStereo, vnOctaveStereo, "stereo", where);
     }
@@ -951,16 +954,9 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     const float deltaMono = Optimizer::msVanillaConfig.huber_delta_mono;
     const float deltaStereo = Optimizer::msVanillaConfig.huber_delta_stereo;
 
-    const bool fixedCovariance = (!Optimizer::mbLiveBAAutotune && Optimizer::msVanillaConfig.fixed_cov_pose_optimization) || Optimizer::mbAutotuneFixedCov;
+    const bool fixedCovariance = Optimizer::msVanillaConfig.cov_pose_only == CovMode::Fixed;
     vector<int> vnOctaveMono, vnOctaveStereo;
-    {
-        static bool loggedCov = false;  // log only once which weight we use 
-        if(!loggedCov)
-        {
-            LOG(INFO) << "[COV] tracking: " << (fixedCovariance ? "fixed" : "ORB");
-            loggedCov = true;
-        }
-    }
+    LOG_FIRST_N(INFO, 1) << "[Pose only] mode : " << cov_auto_tune::covModeName(Optimizer::msVanillaConfig.cov_pose_only);
 
     {
     unique_lock<mutex> lock(MapPoint::mGlobalMutex);
@@ -1120,8 +1116,8 @@ int Optimizer::PoseOptimization(Frame *pFrame)
         static bool logged = false;  // only log once 
         if(!logged && !(vpEdgesMono.empty() && vpEdgesStereo.empty()))
         {
-            LogFixedEdges(vpEdgesMono, vnOctaveMono, "mono", "first pose optimization (fixed_cov_pose_optimization)");
-            LogFixedEdges(vpEdgesStereo, vnOctaveStereo, "stereo", "first pose optimization (fixed_cov_pose_optimization)");
+            LogFixedEdges(vpEdgesMono, vnOctaveMono, "mono", "first pose optimization (cov pose_only: fixed)");
+            LogFixedEdges(vpEdgesStereo, vnOctaveStereo, "stereo", "first pose optimization (cov pose_only: fixed)");
             logged = true;
         }
     }
@@ -1559,6 +1555,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         if(*pbStopFlag)
             return;
 
+    LOG_FIRST_N(INFO, 1) << "[Local BA] mode : " << cov_auto_tune::covModeName(Optimizer::msVanillaConfig.cov_local_ba);
     if(Optimizer::mbLiveBAAutotune)
     {   //edges and vector of their octaves.
         std::vector<g2o::OptimizableGraph::Edge*> vpEdgesMonoGeneric(vpEdgesMono.begin(), vpEdgesMono.end());
@@ -1570,8 +1567,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     else
     {
         solver->setStopCriteriaThreshold(Optimizer::msVanillaConfig.stop_criteria_threshold);
-        LOG(INFO) << "[COV] local BA: " << ((Optimizer::msVanillaConfig.fixed_cov_every_ba || Optimizer::mbAutotuneFixedCov) ? "fixed" : "ORB");
-        if(Optimizer::msVanillaConfig.fixed_cov_every_ba || Optimizer::mbAutotuneFixedCov)
+        LOG(INFO) << "[COV] local BA: " << ((Optimizer::msVanillaConfig.cov_local_ba == CovMode::Fixed) ? "fixed" : "ORB");
+        if(Optimizer::msVanillaConfig.cov_local_ba == CovMode::Fixed)
         {
             for(size_t i = 0; i < vpEdgesMono.size(); ++i)
                 vpEdgesMono[i]->setInformation(FixedInformation(Optimizer::msVanillaConfig.fixed_cov_mono, vnOctaveMono[i]));
@@ -1580,8 +1577,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
             static bool logged = false;                  
             if(!logged)
             {
-                LogFixedEdges(vpEdgesMono, vnOctaveMono, "mono", "first local BA (fixed_cov_every_ba)");
-                LogFixedEdges(vpEdgesStereo, vnOctaveStereo, "stereo", "first local BA (fixed_cov_every_ba)");
+                LogFixedEdges(vpEdgesMono, vnOctaveMono, "mono", "first local BA (cov local_ba: fixed)");
+                LogFixedEdges(vpEdgesStereo, vnOctaveStereo, "stereo", "first local BA (cov local_ba: fixed)");
                 logged = true;
             }
         }
@@ -1668,7 +1665,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     RecordErased(nErasedMono, nErasedStereo, chi2EraseMono, chi2EraseStereo); // saves to log 
     const size_t nEdgesMono = vpEdgesMono.size() + vpEdgesBody.size(), nEdgesStereo = vpEdgesStereo.size();
     LOG(INFO) << "[GATES] local_ba kf=" << pKF->mnId
-              << " mode=" << (Optimizer::mbLiveBAAutotune ? "autotune" : ((vanilla.fixed_cov_every_ba || Optimizer::mbAutotuneFixedCov) ? "fixed" : "ORB"))
+              << " mode=" << (Optimizer::mbLiveBAAutotune ? "autotune" : ((vanilla.cov_local_ba == CovMode::Fixed) ? "fixed" : "ORB"))
               << " | mono edges=" << nEdgesMono << " bad_mp=" << nBadMPMono
               << " outliers=" << nErasedMono << " (chi2=" << nErasedMono - nNegDepthMono << " neg_depth=" << nNegDepthMono << ")"
               << " inliers=" << nEdgesMono - nBadMPMono - nErasedMono << " delta=" << std::sqrt(chi2EraseMono) << " huber=" << thHuberMono

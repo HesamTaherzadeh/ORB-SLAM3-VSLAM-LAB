@@ -18,7 +18,6 @@
 
 #include "Pinhole.h"
 #include "LocalMapping.h"  
-#include "Optimizer.h"
 #include <boost/serialization/export.hpp>
 
 //BOOST_CLASS_EXPORT_IMPLEMENT(ORB_SLAM3::Pinhole)
@@ -129,7 +128,7 @@ namespace ORB_SLAM3 {
         const float chi2 = cfg.epipolar_chi2;  // 1-dof chi2 (3.84 = 95%, original)
 
         // fixed covariance: distance to the epipolar line in units of kp2's noise along the line normal n=(a,b)
-        if(cfg.fixed_cov_epipolar || Optimizer::mbAutotuneFixedCov)
+        if(cfg.cov_epipolar == CovMode::Fixed)
         {
             const Eigen::Matrix2f S = cfg.fixed_cov_mono[kp2.octave].cast<float>();
             const float var = a*a*S(0,0) + 2*a*b*S(0,1) + b*b*S(1,1);  // nᵀ Σ₂ n

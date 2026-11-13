@@ -2284,7 +2284,8 @@ void LoopClosing::RunGlobalBundleAdjustment(Map* pActiveMap, unsigned long nLoop
     const bool bImuInit = pActiveMap->isImuInitialized();
 
     if(!bImuInit)
-        Optimizer::GlobalBundleAdjustemnt(pActiveMap,10,&mbStopGBA,nLoopKF,false);
+        Optimizer::GlobalBundleAdjustemnt(pActiveMap,10/*iteration count*/,&mbStopGBA /*interruption call*/,nLoopKF /*loop kf count*/,false/* no huber*/,
+                                          Optimizer::msVanillaConfig.cov_gba == CovMode::Autotune /*should we autotune or not*/);  // bAutotune: cov gba: autotune
     else
         Optimizer::FullInertialBA(pActiveMap,7,false,nLoopKF,&mbStopGBA);
 
@@ -2301,12 +2302,6 @@ void LoopClosing::RunGlobalBundleAdjustment(Map* pActiveMap, unsigned long nLoop
 #endif
 
     int idx =  mnFullBAIdx;
-    // Optimizer::GlobalBundleAdjustemnt(mpMap,10,&mbStopGBA,nLoopKF,false);
-
-    // Update all MapPoints and KeyFrames
-    // Local Mapping was active during BA, that means that there might be new keyframes
-    // not included in the Global BA and they are not consistent with the updated map.
-    // We need to propagate the correction through the spanning tree
     {
         unique_lock<mutex> lock(mMutexGBA);
         if(idx!=mnFullBAIdx)
