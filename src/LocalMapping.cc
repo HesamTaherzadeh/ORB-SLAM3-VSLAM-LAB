@@ -668,7 +668,7 @@ void LocalMapping::CreateNewMapPoints()
                 float errY1 = uv1.y - kp1.pt.y;
 
                 const Eigen::Vector2d e1(errX1, errY1);
-                if(msVanillaConfig.fixed_cov_triangulation ? e1.dot(FixedInformation(msVanillaConfig.fixed_cov_mono, kp1.octave) * e1) > (msVanillaConfig.huber_delta_mono * msVanillaConfig.huber_delta_mono)
+                if((msVanillaConfig.fixed_cov_triangulation || Optimizer::mbAutotuneFixedCov) ? e1.dot(FixedInformation(msVanillaConfig.fixed_cov_mono, kp1.octave) * e1) > (msVanillaConfig.huber_delta_mono * msVanillaConfig.huber_delta_mono)
                                                            : (errX1*errX1+errY1*errY1)>5.991*sigmaSquare1)
                     {
                         nRejectedMono++;
@@ -685,7 +685,7 @@ void LocalMapping::CreateNewMapPoints()
                 float errY1 = v1 - kp1.pt.y;
                 float errX1_r = u1_r - kp1_ur;
                 const Eigen::Vector3d e1(errX1, errY1, errX1_r);
-                if(msVanillaConfig.fixed_cov_triangulation ? e1.dot(FixedInformation(msVanillaConfig.fixed_cov_stereo, kp1.octave) * e1) > (msVanillaConfig.huber_delta_stereo * msVanillaConfig.huber_delta_stereo)
+                if((msVanillaConfig.fixed_cov_triangulation || Optimizer::mbAutotuneFixedCov) ? e1.dot(FixedInformation(msVanillaConfig.fixed_cov_stereo, kp1.octave) * e1) > (msVanillaConfig.huber_delta_stereo * msVanillaConfig.huber_delta_stereo)
                                                            : (errX1*errX1+errY1*errY1+errX1_r*errX1_r)>7.8*sigmaSquare1)
                     {
                         nRejectedStereo++;
@@ -704,7 +704,7 @@ void LocalMapping::CreateNewMapPoints()
                 float errX2 = uv2.x - kp2.pt.x;
                 float errY2 = uv2.y - kp2.pt.y;
                 const Eigen::Vector2d e2(errX2, errY2);
-                if(msVanillaConfig.fixed_cov_triangulation ? e2.dot(FixedInformation(msVanillaConfig.fixed_cov_mono, kp1.octave) * e2) > (msVanillaConfig.huber_delta_mono * msVanillaConfig.huber_delta_mono)
+                if((msVanillaConfig.fixed_cov_triangulation || Optimizer::mbAutotuneFixedCov) ? e2.dot(FixedInformation(msVanillaConfig.fixed_cov_mono, kp2.octave) * e2) > (msVanillaConfig.huber_delta_mono * msVanillaConfig.huber_delta_mono)
                                                            : (errX2*errX2+errY2*errY2)>5.991*sigmaSquare2)
                     {
                         nRejectedMono++;
@@ -720,7 +720,7 @@ void LocalMapping::CreateNewMapPoints()
                 float errY2 = v2 - kp2.pt.y;
                 float errX2_r = u2_r - kp2_ur;
                 const Eigen::Vector3d e2(errX2, errY2, errX2_r);
-                if(msVanillaConfig.fixed_cov_triangulation ? e2.dot(FixedInformation(msVanillaConfig.fixed_cov_stereo, kp1.octave) * e2) > (msVanillaConfig.huber_delta_stereo * msVanillaConfig.huber_delta_stereo)
+                if((msVanillaConfig.fixed_cov_triangulation || Optimizer::mbAutotuneFixedCov) ? e2.dot(FixedInformation(msVanillaConfig.fixed_cov_stereo, kp2.octave) * e2) > (msVanillaConfig.huber_delta_stereo * msVanillaConfig.huber_delta_stereo)
                                                            : (errX2*errX2+errY2*errY2+errX2_r*errX2_r)>7.8*sigmaSquare2)
                     {
                         nRejectedStereo++;
@@ -769,12 +769,9 @@ void LocalMapping::CreateNewMapPoints()
     }    
     LOG(INFO) << "[GATES] triangulation kf=" << mpCurrentKeyFrame->mnId
               << " matches=" << nMatches
-              << " reprojection=" << (msVanillaConfig.fixed_cov_triangulation ? "fixed" : "ORB")
+              << " reprojection=" << ((msVanillaConfig.fixed_cov_triangulation || Optimizer::mbAutotuneFixedCov) ? "fixed" : "ORB")
               << " rejected_mono=" << nRejectedMono << " rejected_stereo=" << nRejectedStereo << " created=" << nCreated
-              << " stereo1_pts=" << totalStereoPts[0] << " stereo2_pts=" << totalStereoPts[1] << " stereo_both_pts=" << totalStereoBoth
-              << " stereo1_attempt=" << countStereoAttempt[0] << " stereo2_attempt=" << countStereoAttempt[1]
-              << " stereo1_good_proj=" << countStereoGoodProj[0] << " stereo2_good_proj=" << countStereoGoodProj[1]
-              << " stereo1_created=" << countStereo[0] << " stereo2_created=" << countStereo[1];
+              << " stereo1_pts=" << totalStereoPts[0] << " stereo2_pts=" << totalStereoPts[1] << " stereo_both_pts=" << totalStereoBoth;
 }
 
 void LocalMapping::SearchInNeighbors()
@@ -870,7 +867,7 @@ void LocalMapping::SearchInNeighbors()
     if(mpCurrentKeyFrame->NLeft != -1) matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates,true);
 
 
-    LOG(INFO) << "[GATES] fuse kf=" << mpCurrentKeyFrame->mnId << " mode=" << (msVanillaConfig.fixed_cov_fuse ? "fixed" : "ORB")
+    LOG(INFO) << "[GATES] fuse kf=" << mpCurrentKeyFrame->mnId << " mode=" << ((msVanillaConfig.fixed_cov_fuse || Optimizer::mbAutotuneFixedCov) ? "fixed" : "ORB")
               << " gate_rejected=" << matcher.mnGateRejected << " fused=" << nFused;
 
     // Update points

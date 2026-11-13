@@ -19,6 +19,7 @@
 
 #include "ORBmatcher.h"
 #include "LocalMapping.h"
+#include "Optimizer.h"
 #include <glog/logging.h>
 
 #include<limits.h>
@@ -1148,7 +1149,7 @@ namespace ORB_SLAM3
         }
 
         LOG(INFO) << "[GATES] epipolar kf1=" << pKF1->mnId << " kf2=" << pKF2->mnId
-                  << " mode=" << (LocalMapping::msVanillaConfig.fixed_cov_epipolar ? "fixed" : "ORB")
+                  << " mode=" << ((LocalMapping::msVanillaConfig.fixed_cov_epipolar || Optimizer::mbAutotuneFixedCov) ? "fixed" : "ORB")
                   << " chi2=" << LocalMapping::msVanillaConfig.epipolar_chi2
                   << " tested=" << nEpiTested << " rejected=" << nEpiRejected << " matches=" << nmatches;
 
@@ -1292,7 +1293,7 @@ namespace ORB_SLAM3
                     const float e2 = ex*ex+ey*ey+er*er;
 
                     const Eigen::Vector3d e(ex, ey, er);
-                    if(LocalMapping::msVanillaConfig.fixed_cov_fuse ? e.dot(LocalMapping::msVanillaConfig.fixed_cov_stereo[kpLevel].inverse() * e) > (LocalMapping::msVanillaConfig.huber_delta_stereo * LocalMapping::msVanillaConfig.huber_delta_stereo)
+                    if((LocalMapping::msVanillaConfig.fixed_cov_fuse || Optimizer::mbAutotuneFixedCov) ? e.dot(LocalMapping::msVanillaConfig.fixed_cov_stereo[kpLevel].inverse() * e) > (LocalMapping::msVanillaConfig.huber_delta_stereo * LocalMapping::msVanillaConfig.huber_delta_stereo)
                                                                     : e2*pKF->mvInvLevelSigma2[kpLevel]>7.8)
                     {
                         mnGateRejected++;
@@ -1308,7 +1309,7 @@ namespace ORB_SLAM3
                     const float e2 = ex*ex+ey*ey;
 
                     const Eigen::Vector2d e(ex, ey);
-                    if(LocalMapping::msVanillaConfig.fixed_cov_fuse ? e.dot(LocalMapping::msVanillaConfig.fixed_cov_mono[kpLevel].inverse() * e) > (LocalMapping::msVanillaConfig.huber_delta_mono * LocalMapping::msVanillaConfig.huber_delta_mono)
+                    if((LocalMapping::msVanillaConfig.fixed_cov_fuse || Optimizer::mbAutotuneFixedCov) ? e.dot(LocalMapping::msVanillaConfig.fixed_cov_mono[kpLevel].inverse() * e) > (LocalMapping::msVanillaConfig.huber_delta_mono * LocalMapping::msVanillaConfig.huber_delta_mono)
                                                                     : e2*pKF->mvInvLevelSigma2[kpLevel]>5.99)
                     {
                         mnGateRejected++;
