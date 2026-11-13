@@ -21,10 +21,11 @@
 #include "cov_auto_tune/autotuner_config.h"
 #include "cov_auto_tune/g2o/autotuner.h"
 #include "Thirdparty/g2o/g2o/types/types_six_dof_expmap.h"
+#include "OptimizableTypes.h"
 
 namespace ORB_SLAM3
 {
-namespace
+namespace autotune
 {
 
 nlohmann::json g_autotuneBAs = nlohmann::json::array();
@@ -42,13 +43,6 @@ const std::array<Eigen::Matrix3d, 8> kInjectedStereoPriorCovariance = {
     (Eigen::Matrix3d() << 0.751989317, -0.005349621388, 0.6718328119, -0.005349621388, 0.6961910351, -0.08614001829, 0.6718328119, -0.08614001829, 0.8663139485).finished(),
     (Eigen::Matrix3d() << 1.76564417, 0.1596446412, 1.669418929, 0.1596446412, 1.087848242, 0.1096829513, 1.669418929, 0.1096829513, 1.90218122).finished(),
 };
-
-
-} // namespace
-
-
-namespace
-{
 
 int OctaveBandIndex(int octave, const std::vector<std::vector<int>>& octaveBands)
 {
@@ -215,7 +209,49 @@ nlohmann::json Objective(const cov_auto_tune::g2o::Groups& groups)
     return {{"value", value}, {"groups", perGroup}};
 }
 
-} // namespace
+
+nlohmann::json g_poseOnlySteps = nlohmann::json::array();    
+long g_poseOnlyBA = -1;                                      
+template <int Dim, typename EdgeT>
+nlohmann::json TuneType(const std::vector<EdgeT*>& edges, const std::vector<int>& octaves,
+                        const std::vector<float>& scale, unsigned long frameId, int stage)
+{
+    using Matrix = Eigen::Matrix<double, Dim, Dim>; // initialize the matrix 
+    Matrix base = Matrix::Zero();
+    int n = 0;
+    for(size_t i = 0; i < edges.size(); ++i)
+    {
+        if(edges[i]->level() != 0) // do not use the outliers 
+            continue;
+        edges[i]->computeError(); // update cache 
+        const auto& r = edges[i]->error(); // get residuals 
+        base += r * r.transpose() / scale[octaves[i]]; // scale it by 1.2^(2octave) so a bigger octave gets smaller residual
+        ++n;
+    }
+    if(n < 10)
+    {
+        LOG(WARNING) << "[POSE ONLY AUTOTUNE] ba=" << g_poseOnlyBA << " frame=" << frameId << " stage=" << stage
+                     << " " << (Dim == 2 ? "mono" : "stereo") << ": only " << n << " inliers (< 10), base not updated";
+        return {{"edges", n}, {"base", nullptr}};
+    }
+    base /= n;
+
+    const Matrix information = base.inverse();
+    for(size_t i = 0; i < edges.size(); ++i)
+        edges[i]->setInformation(information / scale[octaves[i]]); // dividing the information matrix by the same value -- so a bigger octave gets less weight
+
+    nlohmann::json rows = nlohmann::json::array();
+    for(int r = 0; r < Dim; ++r)
+    {
+        nlohmann::json row = nlohmann::json::array();
+        for(int c = 0; c < Dim; ++c)
+            row.push_back(base(r, c));
+        rows.push_back(row);
+    }
+    return {{"edges", n}, {"base", rows}};
+}
+
+} // namespace autotune
 
 void RunLiveOctaveAutotune(
     g2o::SparseOptimizer& optimizer,
@@ -227,8 +263,8 @@ void RunLiveOctaveAutotune(
     bool* pbStopFlag)
 {
     const auto start = std::chrono::steady_clock::now();
-    g_autotuneBAs.push_back({{"ba", g_autotuneBAs.size()}, {"chi2", nlohmann::json::array()}, {"groups", nlohmann::json::array()}});
-    auto& record = g_autotuneBAs.back();
+    autotune::g_autotuneBAs.push_back({{"ba", autotune::g_autotuneBAs.size()}, {"chi2", nlohmann::json::array()}, {"groups", nlohmann::json::array()}});
+    auto& record = autotune::g_autotuneBAs.back();
     record["optimizations"] = nlohmann::json::array();
     record["objective"] = nlohmann::json::array();             // one entry per outer iteration
     const auto optimize = [&](const char* stage, int requested)
@@ -240,15 +276,15 @@ void RunLiveOctaveAutotune(
                                            {"reached_stop_criterion", iterations > 0 && iterations < requested && !optimizationStop},
                                            {"tracking_stop_flag", optimizationStop}});
     };
-    const EdgeGroups groups =
-        GroupByOctaveBand(vpEdgesMono, vnOctaveMono, vpEdgesStereo, vnOctaveStereo, config.octave_bands);
+    const autotune::EdgeGroups groups =
+        autotune::GroupByOctaveBand(vpEdgesMono, vnOctaveMono, vpEdgesStereo, vnOctaveStereo, config.octave_bands);
 
     cov_auto_tune::AutotunerConfig tunerConfig = config;
     tunerConfig.default_group_covariance.prior_strength = tunerConfig.prior_strength;
 
     cov_auto_tune::g2o::Groups tunerGroups;
-    RegisterGroups(groups.mono, 2, config, tunerGroups);
-    RegisterGroups(groups.stereo, 3, config, tunerGroups);
+    autotune::RegisterGroups(groups.mono, 2, config, tunerGroups);
+    autotune::RegisterGroups(groups.stereo, 3, config, tunerGroups);
 
     tunerConfig.grouping_method = cov_auto_tune::AutotunerConfig::GroupingMethod::ByCell;
     tunerConfig.allow_unregistered_edges = true;
@@ -259,7 +295,7 @@ void RunLiveOctaveAutotune(
 
     optimizer.initializeOptimization();
     optimizer.computeActiveErrors();
-    RecordChi2ByType("initial", vpEdgesMono, vpEdgesStereo, config.huber_delta_mono, config.huber_delta_stereo);
+    autotune::RecordChi2ByType("initial", vpEdgesMono, vpEdgesStereo, config.huber_delta_mono, config.huber_delta_stereo);
 
     LOG(INFO) << "[Autotune.cc] BA start mono_edges=" << vpEdgesMono.size() << " stereo_edges=" << vpEdgesStereo.size()
               << " stop=" << (pbStopFlag && *pbStopFlag);
@@ -278,7 +314,7 @@ void RunLiveOctaveAutotune(
         if(!(pbStopFlag && *pbStopFlag))
             optimize("inner", config.inner_iterations);
 
-        nlohmann::json objective = Objective(autotuner.groups());
+        nlohmann::json objective = autotune::Objective(autotuner.groups());
         optimizer.computeActiveErrors();                                  
         const double robustChi2 = optimizer.activeRobustChi2();
         objective["outer"] = outer;
@@ -293,7 +329,7 @@ void RunLiveOctaveAutotune(
         optimize("post", config.post_iterations);
 
     optimizer.computeActiveErrors();
-    RecordChi2ByType("final", vpEdgesMono, vpEdgesStereo, config.huber_delta_mono, config.huber_delta_stereo);
+    autotune::RecordChi2ByType("final", vpEdgesMono, vpEdgesStereo, config.huber_delta_mono, config.huber_delta_stereo);
 
     for(const auto& [label, group] : autotuner.groups())
     {
@@ -310,7 +346,7 @@ void RunLiveOctaveAutotune(
         LOG(INFO) << "[Autotune.cc]save " << label << " info_rows=" << group.information.rows() << " stop=" << (pbStopFlag && *pbStopFlag);
 
         if(group.information.size() > 0)
-            map_of_label_to_covariance[label] = group.information.inverse();
+            autotune::map_of_label_to_covariance[label] = group.information.inverse();
 
         nlohmann::json covEigenvalues = nlohmann::json::array();
         for(size_t i = 0; i < group.covariance_before_clamp.size(); ++i)
@@ -340,13 +376,13 @@ void RunVanillaWithStats(
     bool* pbStopFlag)
 {
     const auto start = std::chrono::steady_clock::now();
-    g_autotuneBAs.push_back({{"ba", g_autotuneBAs.size()}, {"chi2", nlohmann::json::array()},
+    autotune::g_autotuneBAs.push_back({{"ba", autotune::g_autotuneBAs.size()}, {"chi2", nlohmann::json::array()},
                              {"groups", nlohmann::json::array()}, {"optimizations", nlohmann::json::array()}});
-    auto& record = g_autotuneBAs.back();
+    auto& record = autotune::g_autotuneBAs.back();
 
     optimizer.initializeOptimization();
     optimizer.computeActiveErrors();
-    RecordChi2ByType("initial", vpEdgesMono, vpEdgesStereo, huberDeltaMono, huberDeltaStereo);
+    autotune::RecordChi2ByType("initial", vpEdgesMono, vpEdgesStereo, huberDeltaMono, huberDeltaStereo);
 
     const int done = optimizer.optimize(iterations);
     const bool optimizationStop = pbStopFlag && *pbStopFlag;
@@ -355,7 +391,7 @@ void RunVanillaWithStats(
                                        {"tracking_stop_flag", optimizationStop}});
 
     optimizer.computeActiveErrors();
-    RecordChi2ByType("final", vpEdgesMono, vpEdgesStereo, huberDeltaMono, huberDeltaStereo);
+    autotune::RecordChi2ByType("final", vpEdgesMono, vpEdgesStereo, huberDeltaMono, huberDeltaStereo);
     record["time_s"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
     std::ostringstream line;
@@ -378,9 +414,9 @@ void RunVanillaWithStats(
 
 void RecordErased(size_t erasedMono, size_t erasedStereo, double chi2EraseMono, double chi2EraseStereo)
 {
-    if(g_autotuneBAs.empty())
+    if(autotune::g_autotuneBAs.empty())
         return;
-    g_autotuneBAs.back()["erased"] = {{"mono", erasedMono}, {"stereo", erasedStereo},
+    autotune::g_autotuneBAs.back()["erased"] = {{"mono", erasedMono}, {"stereo", erasedStereo},
                                       {"chi2_mono", chi2EraseMono}, {"chi2_stereo", chi2EraseStereo}};
 }
 
@@ -392,7 +428,35 @@ void SaveAutotuneStats(const std::string& path)
         LOG(ERROR) << "[AUTOTUNE] SaveAutotuneStats: could not open " << path;
         return;
     }
-    f << g_autotuneBAs.dump(2) << '\n';
+    f << autotune::g_autotuneBAs.dump(2) << '\n';
+}
+
+
+void TunePoseOnly(
+    unsigned long frameId,
+    int stage, 
+    const std::vector<EdgeSE3ProjectXYZOnlyPose*>& vpEdgesMono,
+    const std::vector<int>& vnOctaveMono,
+    const std::vector<g2o::EdgeStereoSE3ProjectXYZOnlyPose*>& vpEdgesStereo,
+    const std::vector<int>& vnOctaveStereo,
+    const std::vector<float>& vLevelSigma2)
+{
+    if(stage == 0)          // stage 0 = first of ORB's 4 rounds = a new PoseOptimization call (a frame can have several)
+        ++autotune::g_poseOnlyBA;
+    autotune::g_poseOnlySteps.push_back({{"ba", autotune::g_poseOnlyBA}, {"frame", frameId}, {"stage", stage},
+                               {"mono", autotune::TuneType<2>(vpEdgesMono, vnOctaveMono, vLevelSigma2, frameId, stage)},
+                               {"stereo", autotune::TuneType<3>(vpEdgesStereo, vnOctaveStereo, vLevelSigma2, frameId, stage)}});
+}
+
+void SavePoseOnlyStats(const std::string& path)
+{
+    std::ofstream f(path);
+    if(!f.is_open())
+    {
+        LOG(ERROR) << "[AUTOTUNE] SavePoseOnlyStats: could not open " << path;
+        return;
+    }
+    f << autotune::g_poseOnlySteps.dump(2) << '\n';
 }
 
 } // namespace ORB_SLAM3

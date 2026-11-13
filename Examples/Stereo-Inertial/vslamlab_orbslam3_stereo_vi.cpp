@@ -230,6 +230,8 @@ int main(int argc, char *argv[])
     // Stop all threads
     SLAM.Shutdown();
 
+    if (ORB_SLAM3::Optimizer::msVanillaConfig.cov_pose_only == ORB_SLAM3::CovMode::Autotune)
+        ORB_SLAM3::SavePoseOnlyStats(exp_folder + "/" + paddingZeros(exp_id) + "_json_fullba.json");
     if (ORB_SLAM3::Optimizer::msVanillaConfig.anyAutotune()) {
         ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_autotune.json");
     }

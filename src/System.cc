@@ -560,9 +560,10 @@ void System::Shutdown()
         if(pMap && pMap->KeyFramesInMap() > 0)
         {
             cout << "Final global BA with autotune" << endl;
-            const cov_auto_tune::AutotunerConfig& c = Optimizer::msFullBAConfig;
+            const cov_auto_tune::AutotunerConfig& c = Optimizer::msLocalBAConfig;   // the autotuned BAs read msLocalBAConfig
+            const std::array<float, 2> huber = Optimizer::HuberDelta(Optimizer::msVanillaConfig.huber_final_ba, true);
             LOG(INFO) << "[System.cc] final BA autotune config (the ones that matter): remove_mono=" << c.remove_mono << " disable_huber=" << c.disable_huber
-                      << " huber_mono=" << c.huber_delta_mono << " huber_stereo=" << c.huber_delta_stereo;
+                      << " huber_mono=" << huber[0] << " huber_stereo=" << huber[1];
             LOG(INFO) << "[System.cc] final BA start keyframes=" << pMap->KeyFramesInMap() << " mappoints=" << pMap->MapPointsInMap();
             Optimizer::GlobalBundleAdjustemnt(pMap, 10, NULL, pMap->GetOriginKF()->mnId, true, true); // atlas map, (ignored), no interruption,nLoopKF, apply immediately , with huber(lc is without lc), bautotune, bremovemono
             LOG(INFO) << "[System.cc] final BA end";

@@ -55,6 +55,10 @@ public:
     static cov_auto_tune::AutotunerConfig msFullBAConfig; // (string) FinalBA config path 
     static VanillaConfig msVanillaConfig;
 
+    // Huber δ {mono, stereo} of a BA level (VanillaConfig::huber_<level>): the run config's huber: entry if set,
+    // else the autotune: δ when that level is autotuned, else the vanilla: δ. Kernel and outlier gate of the level.
+    static std::array<float, 2> HuberDelta(const std::array<double, 2>& level, bool autotuned);
+
     void static BundleAdjustment(const std::vector<KeyFrame*> &vpKF, const std::vector<MapPoint*> &vpMP,
                                  int nIterations = 5, bool *pbStopFlag=NULL, const unsigned long nLoopKF=0,
                                  const bool bRobust = true, const bool bAutotune = false,

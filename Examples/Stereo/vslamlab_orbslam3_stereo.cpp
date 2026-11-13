@@ -164,6 +164,15 @@ int main(int argc, char **argv)
         modes << "[MODES] run_config=" << run_config << " mbLiveBAAutotune=" << ORB_SLAM3::Optimizer::mbLiveBAAutotune
               << " mbFinalBAAutotune=" << ORB_SLAM3::Optimizer::mbFinalBAAutotune << (loop_closing ? "" : " (loop closing off: no gba)") << "\n";
         v.print(modes);
+        const auto huberLine = [&](const char* level, const std::array<double, 2>& h, bool autotuned) {
+            const std::array<float, 2> d = ORB_SLAM3::Optimizer::HuberDelta(h, autotuned);
+            modes << "[HUBER] " << level << " mono=" << d[0] << " stereo=" << d[1]
+                  << " (from " << (h[0] > 0.0 ? "huber:" : autotuned ? "autotune:" : "vanilla:") << ")\n";
+        };
+        huberLine("pose_only", v.huber_pose_only, false);
+        huberLine("local_ba ", v.huber_local_ba, ORB_SLAM3::Optimizer::mbLiveBAAutotune);
+        huberLine("gba      ", v.huber_gba, v.cov_gba == ORB_SLAM3::CovMode::Autotune);
+        huberLine("final_ba ", v.huber_final_ba, ORB_SLAM3::Optimizer::mbFinalBAAutotune);
         if (v.anyAutotune()) {
             modes << "[MODES] autotune settings (autotuned BAs):\n";
             ORB_SLAM3::Optimizer::msLocalBAConfig.print(modes);
@@ -238,6 +247,8 @@ int main(int argc, char **argv)
     // Stop all threads
     SLAM.Shutdown();
 
+    if (ORB_SLAM3::Optimizer::msVanillaConfig.cov_pose_only == ORB_SLAM3::CovMode::Autotune)
+        ORB_SLAM3::SavePoseOnlyStats(exp_folder + "/" + paddingZeros(exp_id) + "_json_fullba.json");
     if (ORB_SLAM3::Optimizer::msVanillaConfig.anyAutotune()) {
         ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_autotune.json");
     } else {
