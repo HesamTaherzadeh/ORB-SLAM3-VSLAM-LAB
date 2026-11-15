@@ -1159,10 +1159,6 @@ int Optimizer::PoseOptimization(Frame *pFrame)
         optimizer.initializeOptimization(0);
         optimizer.optimize(its[it]);
 
-        if(autotuneCovariance)   // base from this round's inliers -> every edge's covariance, before the outlier check below
-            TunePoseOnly(pFrame->mnId/* kf id*/, static_cast<int>(it) /*iter count*/, vpEdgesMono, vnOctaveMono, vpEdgesStereo, vnOctaveStereo,
-                         pFrame->mvLevelSigma2 /*scales*/);
-
         nBad=0; nBadMono=0; nBadStereo=0; nRounds=it+1;
         for(size_t i=0, iend=vpEdgesMono.size(); i<iend; i++)
         {
@@ -1175,9 +1171,11 @@ int Optimizer::PoseOptimization(Frame *pFrame)
                 e->computeError();
             }
 
-            const float chi2 = e->chi2();
+            const float chi2 = autotuneCovariance ? static_cast<float>(e->error().squaredNorm()) * pFrame->mvInvLevelSigma2[vnOctaveMono[i]]
+                                                  : e->chi2();
+            const float gateMono = autotuneCovariance ? 5.991f : chi2Mono[it];
 
-            if(chi2>chi2Mono[it])
+            if(chi2>gateMono)
             {                
                 pFrame->mvbOutlier[idx]=true; // all were set false at creation time -- so at first nothing is outlier
                 e->setLevel(1);
@@ -1233,9 +1231,11 @@ int Optimizer::PoseOptimization(Frame *pFrame)
                 e->computeError();
             }
 
-            const float chi2 = e->chi2();
+            const float chi2 = autotuneCovariance ? static_cast<float>(e->error().squaredNorm()) * pFrame->mvInvLevelSigma2[vnOctaveStereo[i]]
+                                                  : e->chi2();
+            const float gateStereo = autotuneCovariance ? 7.815f : chi2Stereo[it];
 
-            if(chi2>chi2Stereo[it])
+            if(chi2>gateStereo)
             {
                 pFrame->mvbOutlier[idx]=true;
                 e->setLevel(1);
@@ -1251,6 +1251,10 @@ int Optimizer::PoseOptimization(Frame *pFrame)
                 e->setRobustKernel(0);
         }
 
+        if(autotuneCovariance)   // base from the edges that passed this round's ORB gate -> every edge's covariance for the next round
+            TunePoseOnly(pFrame->mnId/* kf id*/, static_cast<int>(it) /*iter count*/, vpEdgesMono, vnOctaveMono, vpEdgesStereo, vnOctaveStereo,
+                         pFrame->mvLevelSigma2 /*scales*/);
+
         if(optimizer.edges().size()<10)
             break;
     }    
@@ -1264,7 +1268,8 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
     LOG(INFO) << "[Tracking] pose only ba : removed " << nBadMono << " out of " << vpEdgesMono.size() + vpEdgesMono_FHR.size()
               << " with delta " << deltaMono << " at dim 2 | removed " << nBadStereo << " out of " << vpEdgesStereo.size()
-              << " with delta " << deltaStereo << " at dim 3 | rounds " << nRounds << "/4";
+              << " with delta " << deltaStereo << " at dim 3 | rounds " << nRounds << "/4"
+              << (autotuneCovariance ? " | gate ORB 5.991/7.815" : "");
 
     return nInitialCorrespondences-nBad;
 }
