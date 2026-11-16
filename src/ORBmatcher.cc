@@ -1293,8 +1293,8 @@ namespace ORB_SLAM3
                     const float e2 = ex*ex+ey*ey+er*er;
 
                     const Eigen::Vector3d e(ex, ey, er);
-                    if((LocalMapping::msVanillaConfig.cov_fuse == CovMode::Fixed) ? e.dot(LocalMapping::msVanillaConfig.fixed_cov_stereo[kpLevel].inverse() * e) > (LocalMapping::msVanillaConfig.huber_delta_stereo * LocalMapping::msVanillaConfig.huber_delta_stereo)
-                                                                    : e2*pKF->mvInvLevelSigma2[kpLevel]>7.8)
+                    if((LocalMapping::msVanillaConfig.cov_fuse == CovMode::Fixed) ? e.dot(LocalMapping::msVanillaConfig.fixed_cov_stereo[kpLevel].inverse() * e) > LocalMapping::msVanillaConfig.gate_fuse[1]
+                                                                    : e2*pKF->mvInvLevelSigma2[kpLevel]>LocalMapping::msVanillaConfig.gate_fuse[1])
                     {
                         mnGateRejected++;
                         continue;
@@ -1309,8 +1309,8 @@ namespace ORB_SLAM3
                     const float e2 = ex*ex+ey*ey;
 
                     const Eigen::Vector2d e(ex, ey);
-                    if((LocalMapping::msVanillaConfig.cov_fuse == CovMode::Fixed) ? e.dot(LocalMapping::msVanillaConfig.fixed_cov_mono[kpLevel].inverse() * e) > (LocalMapping::msVanillaConfig.huber_delta_mono * LocalMapping::msVanillaConfig.huber_delta_mono)
-                                                                    : e2*pKF->mvInvLevelSigma2[kpLevel]>5.99)
+                    if((LocalMapping::msVanillaConfig.cov_fuse == CovMode::Fixed) ? e.dot(LocalMapping::msVanillaConfig.fixed_cov_mono[kpLevel].inverse() * e) > LocalMapping::msVanillaConfig.gate_fuse[0]
+                                                                    : e2*pKF->mvInvLevelSigma2[kpLevel]>LocalMapping::msVanillaConfig.gate_fuse[0])
                     {
                         mnGateRejected++;
                         continue;

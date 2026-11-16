@@ -669,8 +669,8 @@ void LocalMapping::CreateNewMapPoints()
                 float errY1 = uv1.y - kp1.pt.y;
 
                 const Eigen::Vector2d e1(errX1, errY1);
-                if((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? e1.dot(FixedInformation(msVanillaConfig.fixed_cov_mono, kp1.octave) * e1) > (msVanillaConfig.huber_delta_mono * msVanillaConfig.huber_delta_mono)
-                                                           : (errX1*errX1+errY1*errY1)>5.991*sigmaSquare1)
+                if((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? e1.dot(FixedInformation(msVanillaConfig.fixed_cov_mono, kp1.octave) * e1) > msVanillaConfig.gate_triangulation[0]
+                                                           : (errX1*errX1+errY1*errY1)>msVanillaConfig.gate_triangulation[0]*sigmaSquare1)
                     {
                         nRejectedMono++;
                         continue;
@@ -686,8 +686,8 @@ void LocalMapping::CreateNewMapPoints()
                 float errY1 = v1 - kp1.pt.y;
                 float errX1_r = u1_r - kp1_ur;
                 const Eigen::Vector3d e1(errX1, errY1, errX1_r);
-                if((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? e1.dot(FixedInformation(msVanillaConfig.fixed_cov_stereo, kp1.octave) * e1) > (msVanillaConfig.huber_delta_stereo * msVanillaConfig.huber_delta_stereo)
-                                                           : (errX1*errX1+errY1*errY1+errX1_r*errX1_r)>7.8*sigmaSquare1)
+                if((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? e1.dot(FixedInformation(msVanillaConfig.fixed_cov_stereo, kp1.octave) * e1) > msVanillaConfig.gate_triangulation[1]
+                                                           : (errX1*errX1+errY1*errY1+errX1_r*errX1_r)>msVanillaConfig.gate_triangulation[1]*sigmaSquare1)
                     {
                         nRejectedStereo++;
                         continue;
@@ -705,8 +705,8 @@ void LocalMapping::CreateNewMapPoints()
                 float errX2 = uv2.x - kp2.pt.x;
                 float errY2 = uv2.y - kp2.pt.y;
                 const Eigen::Vector2d e2(errX2, errY2);
-                if((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? e2.dot(FixedInformation(msVanillaConfig.fixed_cov_mono, kp2.octave) * e2) > (msVanillaConfig.huber_delta_mono * msVanillaConfig.huber_delta_mono)
-                                                           : (errX2*errX2+errY2*errY2)>5.991*sigmaSquare2)
+                if((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? e2.dot(FixedInformation(msVanillaConfig.fixed_cov_mono, kp2.octave) * e2) > msVanillaConfig.gate_triangulation[0]
+                                                           : (errX2*errX2+errY2*errY2)>msVanillaConfig.gate_triangulation[0]*sigmaSquare2)
                     {
                         nRejectedMono++;
                         continue;
@@ -721,8 +721,8 @@ void LocalMapping::CreateNewMapPoints()
                 float errY2 = v2 - kp2.pt.y;
                 float errX2_r = u2_r - kp2_ur;
                 const Eigen::Vector3d e2(errX2, errY2, errX2_r);
-                if((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? e2.dot(FixedInformation(msVanillaConfig.fixed_cov_stereo, kp2.octave) * e2) > (msVanillaConfig.huber_delta_stereo * msVanillaConfig.huber_delta_stereo)
-                                                           : (errX2*errX2+errY2*errY2+errX2_r*errX2_r)>7.8*sigmaSquare2)
+                if((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? e2.dot(FixedInformation(msVanillaConfig.fixed_cov_stereo, kp2.octave) * e2) > msVanillaConfig.gate_triangulation[1]
+                                                           : (errX2*errX2+errY2*errY2+errX2_r*errX2_r)>msVanillaConfig.gate_triangulation[1]*sigmaSquare2)
                     {
                         nRejectedStereo++;
                         continue;

@@ -164,15 +164,13 @@ int main(int argc, char **argv)
         modes << "[MODES] run_config=" << run_config << " mbLiveBAAutotune=" << ORB_SLAM3::Optimizer::mbLiveBAAutotune
               << " mbFinalBAAutotune=" << ORB_SLAM3::Optimizer::mbFinalBAAutotune << (loop_closing ? "" : " (loop closing off: no gba)") << "\n";
         v.print(modes);
-        const auto huberLine = [&](const char* level, const std::array<double, 2>& h, bool autotuned) {
-            const std::array<float, 2> d = ORB_SLAM3::Optimizer::HuberDelta(h, autotuned);
-            modes << "[HUBER] " << level << " mono=" << d[0] << " stereo=" << d[1]
-                  << " (from " << (h[0] > 0.0 ? "huber:" : autotuned ? "autotune:" : "vanilla:") << ")\n";
+        const auto huberLine = [&](const char* stage, const std::array<double, 2>& h) {
+            modes << "[HUBER] " << stage << " mono=" << h[0] << " stereo=" << h[1] << " (from huber:)\n";
         };
-        huberLine("pose_only", v.huber_pose_only, false);
-        huberLine("local_ba ", v.huber_local_ba, ORB_SLAM3::Optimizer::mbLiveBAAutotune);
-        huberLine("gba      ", v.huber_gba, v.cov_gba == ORB_SLAM3::CovMode::Autotune);
-        huberLine("final_ba ", v.huber_final_ba, ORB_SLAM3::Optimizer::mbFinalBAAutotune);
+        huberLine("pose_only    ", v.huber_pose_only);
+        huberLine("local_ba     ", v.huber_local_ba);
+        huberLine("gba          ", v.huber_gba);
+        huberLine("final_ba     ", v.huber_final_ba);
         if (v.anyAutotune()) {
             modes << "[MODES] autotune settings (autotuned BAs):\n";
             ORB_SLAM3::Optimizer::msLocalBAConfig.print(modes);

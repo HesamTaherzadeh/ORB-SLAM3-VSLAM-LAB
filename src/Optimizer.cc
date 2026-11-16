@@ -60,13 +60,9 @@ cov_auto_tune::AutotunerConfig Optimizer::msFullBAConfig = cov_auto_tune::Autotu
 
 VanillaConfig Optimizer::msVanillaConfig = VanillaConfig();
 
-std::array<float, 2> Optimizer::HuberDelta(const std::array<double, 2>& level, bool autotuned)
+std::array<float, 2> Optimizer::HuberDelta(const std::array<double, 2>& level)
 {
-    if(level[0] > 0.0)
-        return {static_cast<float>(level[0]), static_cast<float>(level[1])};
-    if(autotuned)
-        return {static_cast<float>(msLocalBAConfig.huber_delta_mono), static_cast<float>(msLocalBAConfig.huber_delta_stereo)};
-    return {static_cast<float>(msVanillaConfig.huber_delta_mono), static_cast<float>(msVanillaConfig.huber_delta_stereo)};
+    return {static_cast<float>(level[0]), static_cast<float>(level[1])};
 }
 
 namespace
@@ -182,7 +178,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
             maxKFid=pKF->mnId;
     }
 
-    const std::array<float, 2> huberBA = HuberDelta(bRobust ? Optimizer::msVanillaConfig.huber_final_ba : Optimizer::msVanillaConfig.huber_gba, bAutotune);
+    const std::array<float, 2> huberBA = HuberDelta(bRobust ? Optimizer::msVanillaConfig.huber_final_ba : Optimizer::msVanillaConfig.huber_gba);
     const float thHuber2D = huberBA[0];   // final BA (bRobust) or loop-closure GBA
     const float thHuber3D = huberBA[1];
     const bool removeMono = bAutotune ? Optimizer::msLocalBAConfig.remove_mono : bRemoveMono;     
@@ -964,12 +960,15 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     vpEdgesStereo.reserve(N);
     vnIndexEdgeStereo.reserve(N);
 
-    const std::array<float, 2> huberPoseOnly = HuberDelta(Optimizer::msVanillaConfig.huber_pose_only, false);
+    const std::array<float, 2> huberPoseOnly = HuberDelta(Optimizer::msVanillaConfig.huber_pose_only);
     const float deltaMono = huberPoseOnly[0];
     const float deltaStereo = huberPoseOnly[1];
 
     const bool fixedCovariance = Optimizer::msVanillaConfig.cov_pose_only == CovMode::Fixed;
     const bool autotuneCovariance = Optimizer::msVanillaConfig.cov_pose_only == CovMode::Autotune;
+    const bool orbGate = Optimizer::msVanillaConfig.cov_pose_only_gate == CovMode::Orb;
+    const float gateMonoChi2 = static_cast<float>(Optimizer::msVanillaConfig.gate_pose_only[0]);
+    const float gateStereoChi2 = static_cast<float>(Optimizer::msVanillaConfig.gate_pose_only[1]);
     vector<int> vnOctaveMono, vnOctaveStereo;
     LOG_FIRST_N(INFO, 1) << "[Pose only] mode : " << cov_auto_tune::covModeName(Optimizer::msVanillaConfig.cov_pose_only);
 
@@ -1159,6 +1158,10 @@ int Optimizer::PoseOptimization(Frame *pFrame)
         optimizer.initializeOptimization(0);
         optimizer.optimize(its[it]);
 
+        if(autotuneCovariance && !orbGate)   // tune before the check
+            TunePoseOnly(pFrame->mnId/* kf id*/, static_cast<int>(it) /*iter count*/, vpEdgesMono, vnOctaveMono, vpEdgesStereo, vnOctaveStereo,
+                         pFrame->mvLevelSigma2 /*scales*/);
+
         nBad=0; nBadMono=0; nBadStereo=0; nRounds=it+1;
         for(size_t i=0, iend=vpEdgesMono.size(); i<iend; i++)
         {
@@ -1171,9 +1174,9 @@ int Optimizer::PoseOptimization(Frame *pFrame)
                 e->computeError();
             }
 
-            const float chi2 = autotuneCovariance ? static_cast<float>(e->error().squaredNorm()) * pFrame->mvInvLevelSigma2[vnOctaveMono[i]]
+            const float chi2 = orbGate ? static_cast<float>(e->error().squaredNorm()) * pFrame->mvInvLevelSigma2[vnOctaveMono[i]]
                                                   : e->chi2();
-            const float gateMono = autotuneCovariance ? 5.991f : chi2Mono[it];
+            const float gateMono = gateMonoChi2;
 
             if(chi2>gateMono)
             {                
@@ -1231,9 +1234,9 @@ int Optimizer::PoseOptimization(Frame *pFrame)
                 e->computeError();
             }
 
-            const float chi2 = autotuneCovariance ? static_cast<float>(e->error().squaredNorm()) * pFrame->mvInvLevelSigma2[vnOctaveStereo[i]]
+            const float chi2 = orbGate ? static_cast<float>(e->error().squaredNorm()) * pFrame->mvInvLevelSigma2[vnOctaveStereo[i]]
                                                   : e->chi2();
-            const float gateStereo = autotuneCovariance ? 7.815f : chi2Stereo[it];
+            const float gateStereo = gateStereoChi2;
 
             if(chi2>gateStereo)
             {
@@ -1251,7 +1254,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
                 e->setRobustKernel(0);
         }
 
-        if(autotuneCovariance)   // base from the edges that passed this round's ORB gate -> every edge's covariance for the next round
+        if(autotuneCovariance && orbGate)    // re-tune after the check
             TunePoseOnly(pFrame->mnId/* kf id*/, static_cast<int>(it) /*iter count*/, vpEdgesMono, vnOctaveMono, vpEdgesStereo, vnOctaveStereo,
                          pFrame->mvLevelSigma2 /*scales*/);
 
@@ -1269,7 +1272,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     LOG(INFO) << "[Tracking] pose only ba : removed " << nBadMono << " out of " << vpEdgesMono.size() + vpEdgesMono_FHR.size()
               << " with delta " << deltaMono << " at dim 2 | removed " << nBadStereo << " out of " << vpEdgesStereo.size()
               << " with delta " << deltaStereo << " at dim 3 | rounds " << nRounds << "/4"
-              << (autotuneCovariance ? " | gate ORB 5.991/7.815" : "");
+              << " | gate " << (orbGate ? "orb " : "own ") << gateMonoChi2 << "/" << gateStereoChi2;
 
     return nInitialCorrespondences-nBad;
 }
@@ -1439,7 +1442,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     vpMapPointEdgeStereo.reserve(nExpectedSize);
 
     const VanillaConfig& vanilla = Optimizer::msVanillaConfig;
-    const std::array<float, 2> huberLocalBA = HuberDelta(vanilla.huber_local_ba, Optimizer::mbLiveBAAutotune);
+    const std::array<float, 2> huberLocalBA = HuberDelta(vanilla.huber_local_ba);
     const float thHuberMono = huberLocalBA[0];
     const float thHuberStereo = huberLocalBA[1];
 
@@ -1621,11 +1624,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     vToErase.reserve(vpEdgesMono.size()+vpEdgesBody.size()+vpEdgesStereo.size());
 
     // erase at huber 
-    const bool eraseAtHuber = Optimizer::mbLiveBAAutotune && Optimizer::msLocalBAConfig.erase_at_huber_delta;
-    const double chi2EraseMono = Optimizer::mbLiveBAAutotune ? (eraseAtHuber ? double(thHuberMono) * thHuberMono : 5.991)
-                                                             : double(thHuberMono) * thHuberMono;
-    const double chi2EraseStereo = Optimizer::mbLiveBAAutotune ? (eraseAtHuber ? double(thHuberStereo) * thHuberStereo : 7.815)
-                                                               : double(thHuberStereo) * thHuberStereo;
+    const double chi2EraseMono = vanilla.gate_local_ba[0];
+    const double chi2EraseStereo = vanilla.gate_local_ba[1];
 
     size_t nErasedMono = 0, nErasedStereo = 0;
     size_t nBadMPMono = 0, nBadMPStereo = 0, nNegDepthMono = 0, nNegDepthStereo = 0;  // for the [GATES] local_ba log
