@@ -561,7 +561,7 @@ void System::Shutdown()
         {
             cout << "Final global BA with autotune" << endl;
             const cov_auto_tune::AutotunerConfig& c = Optimizer::msLocalBAConfig;   // the autotuned BAs read msLocalBAConfig
-            const std::array<float, 2> huber = Optimizer::HuberDelta(Optimizer::msVanillaConfig.huber_final_ba);
+            const std::array<float, 2> huber = Optimizer::HuberDelta(Optimizer::msRunConfig.huber_final_ba);
             LOG(INFO) << "[System.cc] final BA autotune config (the ones that matter): remove_mono=" << c.remove_mono << " disable_huber=" << c.disable_huber
                       << " huber_mono=" << huber[0] << " huber_stereo=" << huber[1];
             LOG(INFO) << "[System.cc] final BA start keyframes=" << pMap->KeyFramesInMap() << " mappoints=" << pMap->MapPointsInMap();
@@ -575,12 +575,12 @@ void System::Shutdown()
         if(pMap && pMap->KeyFramesInMap() > 0)
         {
             cout << "Final global BA vanilla" << endl;
-            const VanillaConfig& c = Optimizer::msVanillaConfig;
+            const RunConfig& c = Optimizer::msRunConfig;
             LOG(INFO) << "[System.cc] final BA vanilla config: iterations=" << c.num_iterations << " stop=" << c.stop_criteria_threshold
                       << " remove_mono=" << c.remove_mono << " disable_huber=" << c.disable_huber;
             LOG(INFO) << "[System.cc] final BA start keyframes=" << pMap->KeyFramesInMap() << " mappoints=" << pMap->MapPointsInMap();
-            Optimizer::GlobalBundleAdjustemnt(pMap, Optimizer::msVanillaConfig.num_iterations, NULL /*pbstopflag is ignored*/, pMap->GetOriginKF()->mnId, true,
-                                              false/*not apply autotune*/, Optimizer::msVanillaConfig.remove_mono);
+            Optimizer::GlobalBundleAdjustemnt(pMap, Optimizer::msRunConfig.num_iterations, NULL /*pbstopflag is ignored*/, pMap->GetOriginKF()->mnId, true,
+                                              false/*not apply autotune*/, Optimizer::msRunConfig.remove_mono);
             LOG(INFO) << "[System.cc] final BA end";
         }
     }

@@ -112,7 +112,7 @@ public:
     bool mbFarPoints;
     float mThFarPoints;
 
-    static VanillaConfig msVanillaConfig;
+    static RunConfig msRunConfig;
 
 #ifdef REGISTER_TIMES
     vector<double> vdKFInsert_ms;

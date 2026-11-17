@@ -124,7 +124,7 @@ namespace ORB_SLAM3 {
             return false;
 
 
-        const VanillaConfig& cfg = LocalMapping::msVanillaConfig;
+        const RunConfig& cfg = LocalMapping::msRunConfig;
         const float chi2 = cfg.epipolar_chi2;  // 1-dof chi2 (3.84 = 95%, original)
 
         // fixed covariance: distance to the epipolar line in units of kp2's noise along the line normal n=(a,b)

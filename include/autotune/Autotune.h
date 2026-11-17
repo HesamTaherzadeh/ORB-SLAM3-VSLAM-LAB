@@ -19,8 +19,8 @@ namespace ORB_SLAM3
 
 class EdgeSE3ProjectXYZOnlyPose;
 
-using VanillaConfig = cov_auto_tune::VanillaConfig;  // defined in autotune_core (cov_auto_tune/autotuner_config.h)
-using CovMode = cov_auto_tune::CovMode;              // orb | fixed | autotune, one per stage (VanillaConfig::cov_*)
+using RunConfig = cov_auto_tune::RunConfig;  // defined in autotune_core (cov_auto_tune/autotuner_config.h)
+using CovMode = cov_auto_tune::CovMode;              // orb | fixed | autotune, one per stage (RunConfig::cov_*)
 
 // writes one JSON record per local BA: chi2 before / after and the clamp flags of every group after the last tune()
 void SaveAutotuneStats(const std::string& path);

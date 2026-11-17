@@ -1147,10 +1147,10 @@ namespace ORB_SLAM3
             vMatchedPairs.push_back(make_pair(i,vMatches12[i]));
         }
 
-        LOG_FIRST_N(INFO, 1) << "[Epipolar] mode : " << cov_auto_tune::covModeName(LocalMapping::msVanillaConfig.cov_epipolar);
+        LOG_FIRST_N(INFO, 1) << "[Epipolar] mode : " << cov_auto_tune::covModeName(LocalMapping::msRunConfig.cov_epipolar);
         LOG(INFO) << "[GATES] epipolar kf1=" << pKF1->mnId << " kf2=" << pKF2->mnId
-                  << " mode=" << ((LocalMapping::msVanillaConfig.cov_epipolar == CovMode::Fixed) ? "fixed" : "ORB")
-                  << " chi2=" << LocalMapping::msVanillaConfig.epipolar_chi2
+                  << " mode=" << ((LocalMapping::msRunConfig.cov_epipolar == CovMode::Fixed) ? "fixed" : "ORB")
+                  << " chi2=" << LocalMapping::msRunConfig.epipolar_chi2
                   << " tested=" << nEpiTested << " rejected=" << nEpiRejected << " matches=" << nmatches;
 
         return nmatches;
@@ -1293,8 +1293,8 @@ namespace ORB_SLAM3
                     const float e2 = ex*ex+ey*ey+er*er;
 
                     const Eigen::Vector3d e(ex, ey, er);
-                    if((LocalMapping::msVanillaConfig.cov_fuse == CovMode::Fixed) ? e.dot(LocalMapping::msVanillaConfig.fixed_cov_stereo[kpLevel].inverse() * e) > LocalMapping::msVanillaConfig.gate_fuse[1]
-                                                                    : e2*pKF->mvInvLevelSigma2[kpLevel]>LocalMapping::msVanillaConfig.gate_fuse[1])
+                    if((LocalMapping::msRunConfig.cov_fuse == CovMode::Fixed) ? e.dot(LocalMapping::msRunConfig.fixed_cov_stereo[kpLevel].inverse() * e) > LocalMapping::msRunConfig.gate_fuse[1]
+                                                                    : e2*pKF->mvInvLevelSigma2[kpLevel]>LocalMapping::msRunConfig.gate_fuse[1])
                     {
                         mnGateRejected++;
                         continue;
@@ -1309,8 +1309,8 @@ namespace ORB_SLAM3
                     const float e2 = ex*ex+ey*ey;
 
                     const Eigen::Vector2d e(ex, ey);
-                    if((LocalMapping::msVanillaConfig.cov_fuse == CovMode::Fixed) ? e.dot(LocalMapping::msVanillaConfig.fixed_cov_mono[kpLevel].inverse() * e) > LocalMapping::msVanillaConfig.gate_fuse[0]
-                                                                    : e2*pKF->mvInvLevelSigma2[kpLevel]>LocalMapping::msVanillaConfig.gate_fuse[0])
+                    if((LocalMapping::msRunConfig.cov_fuse == CovMode::Fixed) ? e.dot(LocalMapping::msRunConfig.fixed_cov_mono[kpLevel].inverse() * e) > LocalMapping::msRunConfig.gate_fuse[0]
+                                                                    : e2*pKF->mvInvLevelSigma2[kpLevel]>LocalMapping::msRunConfig.gate_fuse[0])
                     {
                         mnGateRejected++;
                         continue;

@@ -32,7 +32,7 @@
 namespace ORB_SLAM3
 {
 
-VanillaConfig LocalMapping::msVanillaConfig = VanillaConfig();
+RunConfig LocalMapping::msRunConfig = RunConfig();
 
 LocalMapping::LocalMapping(System* pSys, Atlas *pAtlas, const float bMonocular, bool bInertial, const string &_strSeqName):
     mpSystem(pSys), mbMonocular(bMonocular), mbInertial(bInertial), mbResetRequested(false), mbResetRequestedActiveMap(false), mbFinishRequested(false), mbFinished(true), mpAtlas(pAtlas), bInitializing(false),
@@ -402,7 +402,7 @@ void LocalMapping::MapPointCulling()
 
 void LocalMapping::CreateNewMapPoints()
 {
-    LOG_FIRST_N(INFO, 1) << "[Triangulation] mode : " << cov_auto_tune::covModeName(msVanillaConfig.cov_triangulation);
+    LOG_FIRST_N(INFO, 1) << "[Triangulation] mode : " << cov_auto_tune::covModeName(msRunConfig.cov_triangulation);
     // Retrieve neighbor keyframes in covisibility graph
     int nn = 10;
     // For stereo inertial case
@@ -669,8 +669,8 @@ void LocalMapping::CreateNewMapPoints()
                 float errY1 = uv1.y - kp1.pt.y;
 
                 const Eigen::Vector2d e1(errX1, errY1);
-                if((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? e1.dot(FixedInformation(msVanillaConfig.fixed_cov_mono, kp1.octave) * e1) > msVanillaConfig.gate_triangulation[0]
-                                                           : (errX1*errX1+errY1*errY1)>msVanillaConfig.gate_triangulation[0]*sigmaSquare1)
+                if((msRunConfig.cov_triangulation == CovMode::Fixed) ? e1.dot(FixedInformation(msRunConfig.fixed_cov_mono, kp1.octave) * e1) > msRunConfig.gate_triangulation[0]
+                                                           : (errX1*errX1+errY1*errY1)>msRunConfig.gate_triangulation[0]*sigmaSquare1)
                     {
                         nRejectedMono++;
                         continue;
@@ -686,8 +686,8 @@ void LocalMapping::CreateNewMapPoints()
                 float errY1 = v1 - kp1.pt.y;
                 float errX1_r = u1_r - kp1_ur;
                 const Eigen::Vector3d e1(errX1, errY1, errX1_r);
-                if((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? e1.dot(FixedInformation(msVanillaConfig.fixed_cov_stereo, kp1.octave) * e1) > msVanillaConfig.gate_triangulation[1]
-                                                           : (errX1*errX1+errY1*errY1+errX1_r*errX1_r)>msVanillaConfig.gate_triangulation[1]*sigmaSquare1)
+                if((msRunConfig.cov_triangulation == CovMode::Fixed) ? e1.dot(FixedInformation(msRunConfig.fixed_cov_stereo, kp1.octave) * e1) > msRunConfig.gate_triangulation[1]
+                                                           : (errX1*errX1+errY1*errY1+errX1_r*errX1_r)>msRunConfig.gate_triangulation[1]*sigmaSquare1)
                     {
                         nRejectedStereo++;
                         continue;
@@ -705,8 +705,8 @@ void LocalMapping::CreateNewMapPoints()
                 float errX2 = uv2.x - kp2.pt.x;
                 float errY2 = uv2.y - kp2.pt.y;
                 const Eigen::Vector2d e2(errX2, errY2);
-                if((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? e2.dot(FixedInformation(msVanillaConfig.fixed_cov_mono, kp2.octave) * e2) > msVanillaConfig.gate_triangulation[0]
-                                                           : (errX2*errX2+errY2*errY2)>msVanillaConfig.gate_triangulation[0]*sigmaSquare2)
+                if((msRunConfig.cov_triangulation == CovMode::Fixed) ? e2.dot(FixedInformation(msRunConfig.fixed_cov_mono, kp2.octave) * e2) > msRunConfig.gate_triangulation[0]
+                                                           : (errX2*errX2+errY2*errY2)>msRunConfig.gate_triangulation[0]*sigmaSquare2)
                     {
                         nRejectedMono++;
                         continue;
@@ -721,8 +721,8 @@ void LocalMapping::CreateNewMapPoints()
                 float errY2 = v2 - kp2.pt.y;
                 float errX2_r = u2_r - kp2_ur;
                 const Eigen::Vector3d e2(errX2, errY2, errX2_r);
-                if((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? e2.dot(FixedInformation(msVanillaConfig.fixed_cov_stereo, kp2.octave) * e2) > msVanillaConfig.gate_triangulation[1]
-                                                           : (errX2*errX2+errY2*errY2+errX2_r*errX2_r)>msVanillaConfig.gate_triangulation[1]*sigmaSquare2)
+                if((msRunConfig.cov_triangulation == CovMode::Fixed) ? e2.dot(FixedInformation(msRunConfig.fixed_cov_stereo, kp2.octave) * e2) > msRunConfig.gate_triangulation[1]
+                                                           : (errX2*errX2+errY2*errY2+errX2_r*errX2_r)>msRunConfig.gate_triangulation[1]*sigmaSquare2)
                     {
                         nRejectedStereo++;
                         continue;
@@ -770,14 +770,14 @@ void LocalMapping::CreateNewMapPoints()
     }    
     LOG(INFO) << "[GATES] triangulation kf=" << mpCurrentKeyFrame->mnId
               << " matches=" << nMatches
-              << " reprojection=" << ((msVanillaConfig.cov_triangulation == CovMode::Fixed) ? "fixed" : "ORB")
+              << " reprojection=" << ((msRunConfig.cov_triangulation == CovMode::Fixed) ? "fixed" : "ORB")
               << " rejected_mono=" << nRejectedMono << " rejected_stereo=" << nRejectedStereo << " created=" << nCreated
               << " stereo1_pts=" << totalStereoPts[0] << " stereo2_pts=" << totalStereoPts[1] << " stereo_both_pts=" << totalStereoBoth;
 }
 
 void LocalMapping::SearchInNeighbors()
 {
-    LOG_FIRST_N(INFO, 1) << "[Fuse] mode : " << cov_auto_tune::covModeName(msVanillaConfig.cov_fuse);
+    LOG_FIRST_N(INFO, 1) << "[Fuse] mode : " << cov_auto_tune::covModeName(msRunConfig.cov_fuse);
     // Retrieve neighbor keyframes
     int nn = 10;
     if(mbMonocular)
@@ -869,7 +869,7 @@ void LocalMapping::SearchInNeighbors()
     if(mpCurrentKeyFrame->NLeft != -1) matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates,true);
 
 
-    LOG(INFO) << "[GATES] fuse kf=" << mpCurrentKeyFrame->mnId << " mode=" << ((msVanillaConfig.cov_fuse == CovMode::Fixed) ? "fixed" : "ORB")
+    LOG(INFO) << "[GATES] fuse kf=" << mpCurrentKeyFrame->mnId << " mode=" << ((msRunConfig.cov_fuse == CovMode::Fixed) ? "fixed" : "ORB")
               << " gate_rejected=" << matcher.mnGateRejected << " fused=" << nFused;
 
     // Update points
