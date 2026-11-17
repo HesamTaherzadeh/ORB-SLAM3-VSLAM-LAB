@@ -44,6 +44,8 @@ const std::array<Eigen::Matrix3d, 8> kInjectedStereoPriorCovariance = {
     (Eigen::Matrix3d() << 1.76564417, 0.1596446412, 1.669418929, 0.1596446412, 1.087848242, 0.1096829513, 1.669418929, 0.1096829513, 1.90218122).finished(),
 };
 
+const int kFarGroupOffset = 8;   // stereo key = octave (near) or octave + 8 (far)
+
 int OctaveBandIndex(int octave, const std::vector<std::vector<int>>& octaveBands)
 {
     if(octaveBands.empty())
@@ -65,7 +67,8 @@ void RegisterGroups(
 
     for(const auto& entry : groups)
     {
-        const int octave = entry.first;
+        const bool far = dimension == 3 && entry.first >= kFarGroupOffset;
+        const int octave = far ? entry.first - kFarGroupOffset : entry.first; // each groups octave is either the same or same - 8
         const std::vector<g2o::OptimizableGraph::Edge*>& groupEdges = entry.second;
         if(groupEdges.empty())
             continue;
@@ -89,7 +92,7 @@ void RegisterGroups(
             meanInformation = meanCovariance.inverse();
         }
 
-        std::string label = "residuals_dim_" + std::to_string(dimension) + "_octave_" + std::to_string(octave); 
+        std::string label = "residuals_dim_" + std::to_string(dimension) + "_octave_" + std::to_string(octave) + (far ? "_far" : "");
         cov_auto_tune::g2o::Group& group = tunerGroups[label];
 
 
@@ -144,13 +147,23 @@ EdgeGroups GroupByOctaveBand(
     const std::vector<int>& vnOctaveMono,
     const std::vector<g2o::OptimizableGraph::Edge*>& vpEdgesStereo,
     const std::vector<int>& vnOctaveStereo,
-    const std::vector<std::vector<int>>& octaveBands)
+    const std::vector<std::vector<int>>& octaveBands,
+    double disparitySplitPx)
 {
     EdgeGroups groups;
     for(size_t i = 0; i < vpEdgesMono.size(); ++i)
         groups.mono[OctaveBandIndex(vnOctaveMono[i], octaveBands)].push_back(vpEdgesMono[i]);
     for(size_t i = 0; i < vpEdgesStereo.size(); ++i)
-        groups.stereo[OctaveBandIndex(vnOctaveStereo[i], octaveBands)].push_back(vpEdgesStereo[i]);
+    {
+        int key = OctaveBandIndex(vnOctaveStereo[i], octaveBands);
+        if(disparitySplitPx > 0.0) // if disparity is passed at 0 -- it would have 8 arm only
+        {
+            const auto* e = static_cast<const g2o::BaseEdge<3, Eigen::Vector3d>*>(vpEdgesStereo[i]);
+            if(e->measurement()(0) - e->measurement()(2) < disparitySplitPx)
+                key += kFarGroupOffset;
+        }
+        groups.stereo[key].push_back(vpEdgesStereo[i]);
+    }
     return groups;
 }
 
@@ -213,13 +226,13 @@ nlohmann::json Objective(const cov_auto_tune::g2o::Groups& groups)
 nlohmann::json g_poseOnlySteps = nlohmann::json::array();    
 long g_poseOnlyBA = -1;                                      
 
-const double kFarDisparityPx = 20.0;
-const double kFarDisparityInflation = 1e6;  // k = inf (batch_5); batch_4 used 20
-Eigen::Matrix3d InflateDisparity(const Eigen::Matrix3d& covariance)
-{
-    const Eigen::Vector3d n = Eigen::Vector3d(1.0, 0.0, -1.0) / std::sqrt(2.0);   // (uL, v, uR) -> disparity
-    return covariance + (kFarDisparityInflation - 1.0) * n.dot(covariance * n) * n * n.transpose();
-}
+// const double kFarDisparityPx = 20.0;
+// const double kFarDisparityInflation = 1e6;  // k = inf (batch_5); batch_4 used 20
+// Eigen::Matrix3d InflateDisparity(const Eigen::Matrix3d& covariance)
+// {
+//     const Eigen::Vector3d n = Eigen::Vector3d(1.0, 0.0, -1.0) / std::sqrt(2.0);   // (uL, v, uR) -> disparity
+//     return covariance + (kFarDisparityInflation - 1.0) * n.dot(covariance * n) * n * n.transpose();
+// }
 
 template <int Dim, typename EdgeT>
 nlohmann::json TuneType(const std::vector<EdgeT*>& edges, const std::vector<int>& octaves,
@@ -286,7 +299,7 @@ void RunLiveOctaveAutotune(
                                            {"tracking_stop_flag", optimizationStop}});
     };
     const autotune::EdgeGroups groups =
-        autotune::GroupByOctaveBand(vpEdgesMono, vnOctaveMono, vpEdgesStereo, vnOctaveStereo, config.octave_bands);
+        autotune::GroupByOctaveBand(vpEdgesMono, vnOctaveMono, vpEdgesStereo, vnOctaveStereo, config.octave_bands, config.disparity_split_px);
 
     cov_auto_tune::AutotunerConfig tunerConfig = config;
     tunerConfig.default_group_covariance.prior_strength = tunerConfig.prior_strength;
@@ -320,18 +333,18 @@ void RunLiveOctaveAutotune(
             LOG(INFO) << "[Autotune.cc] tune outer=" << outer << " t=" << t;
         }
 
-        for(const auto& [label, group] : autotuner.groups())
-        {
-            if(group.information.rows() != 3 || group.information.cols() != 3)
-                continue;
-            const Eigen::Matrix3d farInformation = autotune::InflateDisparity(Eigen::Matrix3d(group.information).inverse()).inverse();
-            for(g2o::OptimizableGraph::Edge* edge : group.edges)
-            {
-                auto* e = dynamic_cast<g2o::BaseEdge<3, Eigen::Vector3d>*>(edge);
-                if(e && e->measurement()(0) - e->measurement()(2) < autotune::kFarDisparityPx)
-                    e->setInformation(farInformation);
-            }
-        }
+        // for(const auto& [label, group] : autotuner.groups())
+        // {
+        //     if(group.information.rows() != 3 || group.information.cols() != 3)
+        //         continue;
+        //     const Eigen::Matrix3d farInformation = autotune::InflateDisparity(Eigen::Matrix3d(group.information).inverse()).inverse();
+        //     for(g2o::OptimizableGraph::Edge* edge : group.edges)
+        //     {
+        //         auto* e = dynamic_cast<g2o::BaseEdge<3, Eigen::Vector3d>*>(edge);
+        //         if(e && e->measurement()(0) - e->measurement()(2) < autotune::kFarDisparityPx)
+        //             e->setInformation(farInformation);
+        //     }
+        // }
 
         if(!(pbStopFlag && *pbStopFlag))
             optimize("inner", config.inner_iterations);
@@ -468,10 +481,10 @@ void TunePoseOnly(
     const nlohmann::json mono = autotune::TuneType<2>(vpEdgesMono, vnOctaveMono, vLevelSigma2, frameId, stage);
     const nlohmann::json stereo = autotune::TuneType<3>(vpEdgesStereo, vnOctaveStereo, vLevelSigma2, frameId, stage);
 
-    if(!stereo["base"].is_null())
-        for(g2o::EdgeStereoSE3ProjectXYZOnlyPose* e : vpEdgesStereo)
-            if(e->measurement()(0) - e->measurement()(2) < autotune::kFarDisparityPx)
-                e->setInformation(autotune::InflateDisparity(e->information().inverse()).inverse());
+    // if(!stereo["base"].is_null())
+    //     for(g2o::EdgeStereoSE3ProjectXYZOnlyPose* e : vpEdgesStereo)
+    //         if(e->measurement()(0) - e->measurement()(2) < autotune::kFarDisparityPx)
+    //             e->setInformation(autotune::InflateDisparity(e->information().inverse()).inverse());
 
     autotune::g_poseOnlySteps.push_back({{"ba", autotune::g_poseOnlyBA}, {"frame", frameId}, {"stage", stage},
                                          {"mono", mono}, {"stereo", stereo}});
