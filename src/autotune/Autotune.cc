@@ -226,13 +226,13 @@ nlohmann::json Objective(const cov_auto_tune::g2o::Groups& groups)
 nlohmann::json g_poseOnlySteps = nlohmann::json::array();    
 long g_poseOnlyBA = -1;                                      
 
-// const double kFarDisparityPx = 20.0;
-// const double kFarDisparityInflation = 1e6;  // k = inf (batch_5); batch_4 used 20
-// Eigen::Matrix3d InflateDisparity(const Eigen::Matrix3d& covariance)
-// {
-//     const Eigen::Vector3d n = Eigen::Vector3d(1.0, 0.0, -1.0) / std::sqrt(2.0);   // (uL, v, uR) -> disparity
-//     return covariance + (kFarDisparityInflation - 1.0) * n.dot(covariance * n) * n * n.transpose();
-// }
+const double kFarDisparityPx = 20.0;
+const double kFarDisparityInflation = 1e6;  // k = inf (batch_5); batch_4 used 20
+Eigen::Matrix3d InflateDisparity(const Eigen::Matrix3d& covariance)
+{
+    const Eigen::Vector3d n = Eigen::Vector3d(1.0, 0.0, -1.0) / std::sqrt(2.0);   // (uL, v, uR) -> disparity
+    return covariance + (kFarDisparityInflation - 1.0) * n.dot(covariance * n) * n * n.transpose();
+}
 
 template <int Dim, typename EdgeT>
 nlohmann::json TuneType(const std::vector<EdgeT*>& edges, const std::vector<int>& octaves,
@@ -333,18 +333,18 @@ void RunLiveOctaveAutotune(
             LOG(INFO) << "[Autotune.cc] tune outer=" << outer << " t=" << t;
         }
 
-        // for(const auto& [label, group] : autotuner.groups())
-        // {
-        //     if(group.information.rows() != 3 || group.information.cols() != 3)
-        //         continue;
-        //     const Eigen::Matrix3d farInformation = autotune::InflateDisparity(Eigen::Matrix3d(group.information).inverse()).inverse();
-        //     for(g2o::OptimizableGraph::Edge* edge : group.edges)
-        //     {
-        //         auto* e = dynamic_cast<g2o::BaseEdge<3, Eigen::Vector3d>*>(edge);
-        //         if(e && e->measurement()(0) - e->measurement()(2) < autotune::kFarDisparityPx)
-        //             e->setInformation(farInformation);
-        //     }
-        // }
+        for(const auto& [label, group] : autotuner.groups())
+        {
+            if(group.information.rows() != 3 || group.information.cols() != 3)
+                continue;
+            const Eigen::Matrix3d farInformation = autotune::InflateDisparity(Eigen::Matrix3d(group.information).inverse()).inverse();
+            for(g2o::OptimizableGraph::Edge* edge : group.edges)
+            {
+                auto* e = dynamic_cast<g2o::BaseEdge<3, Eigen::Vector3d>*>(edge);
+                if(e && e->measurement()(0) - e->measurement()(2) < autotune::kFarDisparityPx)
+                    e->setInformation(farInformation);
+            }
+        }
 
         if(!(pbStopFlag && *pbStopFlag))
             optimize("inner", config.inner_iterations);
@@ -481,10 +481,10 @@ void TunePoseOnly(
     const nlohmann::json mono = autotune::TuneType<2>(vpEdgesMono, vnOctaveMono, vLevelSigma2, frameId, stage);
     const nlohmann::json stereo = autotune::TuneType<3>(vpEdgesStereo, vnOctaveStereo, vLevelSigma2, frameId, stage);
 
-    // if(!stereo["base"].is_null())
-    //     for(g2o::EdgeStereoSE3ProjectXYZOnlyPose* e : vpEdgesStereo)
-    //         if(e->measurement()(0) - e->measurement()(2) < autotune::kFarDisparityPx)
-    //             e->setInformation(autotune::InflateDisparity(e->information().inverse()).inverse());
+    if(!stereo["base"].is_null())
+        for(g2o::EdgeStereoSE3ProjectXYZOnlyPose* e : vpEdgesStereo)
+            if(e->measurement()(0) - e->measurement()(2) < autotune::kFarDisparityPx)
+                e->setInformation(autotune::InflateDisparity(e->information().inverse()).inverse());
 
     autotune::g_poseOnlySteps.push_back({{"ba", autotune::g_poseOnlyBA}, {"frame", frameId}, {"stage", stage},
                                          {"mono", mono}, {"stereo", stereo}});
