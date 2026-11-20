@@ -252,6 +252,8 @@ int main(int argc, char **argv)
     } else {
         ORB_SLAM3::SaveAutotuneStats(exp_folder + "/" + paddingZeros(exp_id) + "_vanilla.json");
     }
+    if (ORB_SLAM3::Optimizer::msRunConfig.dump_pose_only_stereo)
+        ORB_SLAM3::Optimizer::SaveStereoDump(exp_folder + "/" + paddingZeros(exp_id) + "_stereo_dump.csv");
 
     // Tracking time statistics
     sort(vTimesTrack.begin(),vTimesTrack.end());

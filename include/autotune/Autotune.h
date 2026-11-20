@@ -36,6 +36,14 @@ void RunLiveOctaveAutotune(
 
 void RecordErased(size_t erasedMono, size_t erasedStereo, double chi2EraseMono, double chi2EraseStereo);
 
+// running kappa of the stereo disparity residuals, per band (1 far, 0 near): every local BA adds its [Kappa] sums;
+// RunningKappa = sum mean^2 / sum var/n over all keyframe groups so far (1 until 30 groups are in), at least 1
+namespace autotune
+{
+void AddKappa(int band, double sumMean2, double sumVarOverN, double groups);
+double RunningKappa(int band);
+}
+
 // pose-only BA, cov pose_only: autotune. Per type: base = sum_i r_i r_i^T / scale(o_i) / N over the inliers (level 0),
 // scale(o) = 1.2^(2o) = mvLevelSigma2[o]; every edge gets covariance base * scale(o). Logs ba, stage and the two bases.
 void TunePoseOnly(

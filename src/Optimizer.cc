@@ -43,6 +43,10 @@
 
 #include "autotune/Autotune.h"
 #include <array>
+#include <fstream>
+#include <map>
+#include <iomanip>
+#include <cmath>
 #include <glog/logging.h>
 
 
@@ -922,6 +926,25 @@ void Optimizer::FullInertialBA(Map *pMap, int its, const bool bFixLocal, const l
 }
 
 
+// pose-only stereo dump (RunConfig.dump_pose_only_stereo): one row per stereo edge of every pose-only BA, at its final pose
+struct StereoDumpRow { unsigned long frame, mp_id; double ts; int outlier, octave; double ul, v, ur, r_ul, r_v, r_ur, x, y, z; };
+static std::vector<StereoDumpRow> gStereoRows;
+
+void Optimizer::SaveStereoDump(const std::string& path)
+{
+    if(gStereoRows.empty())
+        return;
+    std::ofstream f(path);
+    f << "frame,ts_ns,outlier,mp_id,octave,u_l,v,u_r,r_ul,r_v,r_ur,mp_x,mp_y,mp_z\n";
+    f << std::setprecision(10);
+    for(const auto& r : gStereoRows)
+        f << r.frame << ',' << std::llround(r.ts * 1e9) << ',' << r.outlier << ',' << r.mp_id << ',' << r.octave << ','
+          << r.ul << ',' << r.v << ',' << r.ur << ',' << r.r_ul << ',' << r.r_v << ',' << r.r_ur << ','
+          << r.x << ',' << r.y << ',' << r.z << '\n';
+    LOG(INFO) << "[StereoDump] " << gStereoRows.size() << " rows -> " << path;
+}
+
+
 int Optimizer::PoseOptimization(Frame *pFrame)
 {
     g2o::SparseOptimizer optimizer;
@@ -1261,6 +1284,24 @@ int Optimizer::PoseOptimization(Frame *pFrame)
         if(optimizer.edges().size()<10)
             break;
     }    
+
+    if(Optimizer::msRunConfig.dump_pose_only_stereo)
+    {
+        for(size_t i = 0; i < vpEdgesStereo.size(); i++)
+        {
+            g2o::EdgeStereoSE3ProjectXYZOnlyPose* e = vpEdgesStereo[i];
+            const size_t idx = vnIndexEdgeStereo[i];
+            MapPoint* pMP = pFrame->mvpMapPoints[idx];
+            if(!pMP)
+                continue;
+            e->computeError();                                   // at the final pose
+            const Eigen::Vector3d& m = e->measurement();         // (u_l, v, u_r)
+            const Eigen::Vector3d& r = e->error();               // measurement - projection of the (fixed) map point
+            const Eigen::Vector3f X = pMP->GetWorldPos();
+            gStereoRows.push_back({pFrame->mnId, pMP->mnId, pFrame->mTimeStamp, int(pFrame->mvbOutlier[idx]), vnOctaveStereo[i],
+                                   m(0), m(1), m(2), r(0), r(1), r(2), X(0), X(1), X(2)});
+        }
+    }
 
     // Recover optimized pose and return number of inliers
     g2o::VertexSE3Expmap* vSE3_recov = static_cast<g2o::VertexSE3Expmap*>(optimizer.vertex(0));
@@ -1691,6 +1732,48 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
             KeyFrame* pKFi = vpEdgeKFStereo[i];
             vToErase.push_back(make_pair(pKFi,pMP));
             ++nErasedStereo;
+        }
+    }
+    {
+        struct KappaAcc { double n = 0.0, s = 0.0, s2 = 0.0; }; // size, sum, squard sum
+        std::map<std::pair<unsigned long, int>, KappaAcc> kappaAcc;      // (keyframe id, band: 1 far, 0 near)
+        for(size_t i = 0; i < vpEdgesStereo.size(); i++)
+        {
+            g2o::EdgeStereoSE3ProjectXYZ* e = vpEdgesStereo[i];
+            if(vpMapPointEdgeStereo[i]->isBad())
+                continue;
+            const double chi2 = orbGateLocal ? e->error().squaredNorm() * pKF->mvInvLevelSigma2[vnOctaveStereo[i]] : e->chi2();
+            if(chi2 > chi2EraseStereo || !e->isDepthPositive())
+                continue;
+            const double rd = e->error()(0) - e->error()(2);
+            if(std::abs(rd) >= 5.0)
+                continue;
+            const double pred = (e->measurement()(0) - e->measurement()(2)) - rd;
+            KappaAcc& a = kappaAcc[{vpEdgeKFStereo[i]->mnId, pred < Optimizer::msLocalBAConfig.kappa_split_px ? 1 : 0}];
+            a.n += 1.0; a.s += rd; a.s2 += rd * rd;
+        }
+        for(int band : {1, 0})
+        {
+            double edges = 0.0, sumRd = 0.0, groups = 0.0, sumMean = 0.0, sumMean2 = 0.0, sumVarOverN = 0.0, within = 0.0, dof = 0.0;
+            for(const auto& kv : kappaAcc)
+            {
+                if(kv.first.second != band)
+                    continue;
+                const KappaAcc& a = kv.second;
+                edges += a.n; sumRd += a.s;
+                if(a.n < 10.0)
+                    continue;
+                const double mean = a.s / a.n;
+                const double var = (a.s2 - a.n * mean * mean) / (a.n - 1.0);
+                groups += 1.0; sumMean += mean; sumMean2 += mean * mean; sumVarOverN += var / a.n;
+                within += var * (a.n - 1.0); dof += a.n - 1.0;
+            }
+            autotune::AddKappa(band, sumMean2, sumVarOverN, groups);   // running kappa for autotune.kappa_inflation
+            LOG(INFO) << "[Kappa] local_ba kf=" << pKF->mnId << " band=" << (band ? "far" : "near")
+                      << " edges=" << edges << " mean_rd=" << (edges > 0.0 ? sumRd / edges : 0.0)
+                      << " groups=" << groups << " sum_mean=" << sumMean << " sum_mean2=" << sumMean2
+                      << " sum_var_over_n=" << sumVarOverN << " sigma2=" << (dof > 0.0 ? within / dof : 0.0)
+                      << " kappa=" << (sumVarOverN > 0.0 ? sumMean2 / sumVarOverN : 0.0);
         }
     }
     RecordErased(nErasedMono, nErasedStereo, chi2EraseMono, chi2EraseStereo); // saves to log 
